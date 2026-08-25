@@ -1,0 +1,4 @@
+/canopy
+/cmd/tool/tool
+*.db
+*.pid
