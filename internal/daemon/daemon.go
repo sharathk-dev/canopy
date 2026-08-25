@@ -141,6 +141,18 @@ func (d *Daemon) handleNewSession(conn net.Conn, raw json.RawMessage) {
 		return
 	}
 
+	// Auto-resolve WorktreeID from CWD if not provided.
+	if params.WorktreeID == "" && params.CWD != "" {
+		if wt, err := d.db.GetWorktreeByPath(params.CWD); err == nil {
+			params.WorktreeID = wt.ID
+		} else {
+			// Try prefix match: CWD may be a subdir of a worktree.
+			if wt, err := d.db.GetWorktreeByPathPrefix(params.CWD); err == nil {
+				params.WorktreeID = wt.ID
+			}
+		}
+	}
+
 	var injector hooks.Injector = hooks.NoopInjector{}
 	if params.Tool == "claude" {
 		injector = d.claudeHooks

@@ -16,6 +16,22 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=efb69cde4ddb2166 --token=8a9edccf2613bec9 --event=PostToolUse",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=e6bf53e59d070938 --token=4c8eb14cc646052a --event=PostToolUse",
+            "type": "command"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -31,6 +47,22 @@
         "hooks": [
           {
             "command": "canopy _hook --session=9ef890e9f2e1323e --token=41615c95d9046cb1 --event=PreToolUse",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=efb69cde4ddb2166 --token=8a9edccf2613bec9 --event=PreToolUse",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=e6bf53e59d070938 --token=4c8eb14cc646052a --event=PreToolUse",
             "type": "command"
           }
         ]
@@ -52,6 +84,22 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=efb69cde4ddb2166 --token=8a9edccf2613bec9 --event=Stop",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=e6bf53e59d070938 --token=4c8eb14cc646052a --event=Stop",
+            "type": "command"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -67,6 +115,22 @@
         "hooks": [
           {
             "command": "canopy _hook --session=9ef890e9f2e1323e --token=41615c95d9046cb1 --event=UserPromptSubmit",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=efb69cde4ddb2166 --token=8a9edccf2613bec9 --event=UserPromptSubmit",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=e6bf53e59d070938 --token=4c8eb14cc646052a --event=UserPromptSubmit",
             "type": "command"
           }
         ]

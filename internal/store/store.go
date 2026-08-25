@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/sharathk-dev/canopy/internal/protocol"
@@ -164,6 +165,28 @@ func (s *Store) GetWorktreeByPath(path string) (protocol.Worktree, error) {
 	err := row.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
 	w.IsMain = isMain != 0
 	return w, err
+}
+
+// GetWorktreeByPathPrefix finds the worktree whose path is the longest prefix of dir.
+func (s *Store) GetWorktreeByPathPrefix(dir string) (protocol.Worktree, error) {
+	rows, err := s.db.Query(
+		`SELECT id,repo_path,path,branch,is_main FROM worktrees ORDER BY length(path) DESC`)
+	if err != nil {
+		return protocol.Worktree{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var w protocol.Worktree
+		var isMain int
+		if err := rows.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain); err != nil {
+			return protocol.Worktree{}, err
+		}
+		w.IsMain = isMain != 0
+		if strings.HasPrefix(dir, w.Path) {
+			return w, nil
+		}
+	}
+	return protocol.Worktree{}, sql.ErrNoRows
 }
 
 // --- Sessions ---
