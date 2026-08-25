@@ -12,7 +12,8 @@ const (
 	CmdRegisterProject = "register_project"
 	CmdListProjects    = "list_projects"
 	CmdHookEvent       = "hook_event"
-	CmdUpdateTitle     = "update_title"
+	CmdUpdateTitle      = "update_title"
+	CmdSessionSnapshot  = "session_snapshot"
 	CmdListWorktrees   = "list_worktrees"
 	CmdAddWorktree     = "add_worktree"
 	CmdRemoveWorktree  = "remove_worktree"
@@ -72,6 +73,14 @@ const (
 	HookStop             = "Stop"
 	HookUserPromptSubmit = "UserPromptSubmit"
 )
+
+type SnapshotParams struct {
+	SessionID string `json:"session_id"`
+}
+
+type SnapshotResponse struct {
+	Text string `json:"text"`
+}
 
 type UpdateTitleParams struct {
 	SessionID string `json:"session_id"`

@@ -108,6 +108,9 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		case protocol.CmdUpdateTitle:
 			d.handleUpdateTitle(conn, cmd.Payload)
 
+		case protocol.CmdSessionSnapshot:
+			d.handleSessionSnapshot(conn, cmd.Payload)
+
 		case protocol.CmdRegisterProject:
 			d.handleRegisterProject(conn, cmd.Payload)
 
@@ -263,6 +266,23 @@ func (d *Daemon) handleListProjects(conn net.Conn) {
 		return
 	}
 	d.sendOK(conn, projects)
+}
+
+func (d *Daemon) handleSessionSnapshot(conn net.Conn, raw json.RawMessage) {
+	var params protocol.SnapshotParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.SessionID == "" {
+		d.sendErr(conn, "invalid session_snapshot params")
+		return
+	}
+	d.mu.RLock()
+	proc, ok := d.sessions[params.SessionID]
+	d.mu.RUnlock()
+	if !ok {
+		d.sendErr(conn, "session not found or not running")
+		return
+	}
+	text := proc.snapshot()
+	d.sendOK(conn, protocol.SnapshotResponse{Text: text})
 }
 
 func (d *Daemon) handleListWorktrees(conn net.Conn, raw json.RawMessage) {

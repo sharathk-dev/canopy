@@ -187,6 +187,13 @@ func (p *sessionProc) kill() {
 	p.ptmx.Close()
 }
 
+// snapshot returns the current terminal screen as a plain-text string.
+func (p *sessionProc) snapshot() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.term.String()
+}
+
 // isDone reports whether the process has exited.
 func (p *sessionProc) isDone() bool {
 	select {
