@@ -11,6 +11,7 @@ const (
 	CmdKillSession     = "kill_session"
 	CmdRegisterProject = "register_project"
 	CmdListProjects    = "list_projects"
+	CmdHookEvent       = "hook_event"
 	CmdListWorktrees   = "list_worktrees"
 	CmdAddWorktree     = "add_worktree"
 	CmdRemoveWorktree  = "remove_worktree"
@@ -54,6 +55,22 @@ type DetachParams struct {
 type KillSessionParams struct {
 	SessionID string `json:"session_id"`
 }
+
+// HookEventParams is sent by `canopy _hook` when Claude fires a lifecycle hook.
+type HookEventParams struct {
+	SessionID string          `json:"session_id"`
+	Token     string          `json:"token"`
+	EventType string          `json:"event_type"` // PreToolUse | PostToolUse | Stop | UserPromptSubmit
+	Data      json.RawMessage `json:"data,omitempty"`
+}
+
+// Claude hook event types.
+const (
+	HookPreToolUse       = "PreToolUse"
+	HookPostToolUse      = "PostToolUse"
+	HookStop             = "Stop"
+	HookUserPromptSubmit = "UserPromptSubmit"
+)
 
 type RegisterProjectParams struct {
 	// RepoPath is the absolute path to the git repository root.

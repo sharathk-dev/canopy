@@ -8,24 +8,29 @@ import (
 	"os"
 	"sync"
 
+	"github.com/sharathk-dev/canopy/internal/hooks"
 	"github.com/sharathk-dev/canopy/internal/protocol"
 	"github.com/sharathk-dev/canopy/internal/store"
 )
 
 // Daemon owns all running sessions and serves the unix socket.
 type Daemon struct {
-	db       *store.Store
-	sessions map[string]*sessionProc
-	mu       sync.RWMutex
-	sockPath string
+	db           *store.Store
+	sessions     map[string]*sessionProc
+	tokens       map[string]string // hookToken → sessionID
+	mu           sync.RWMutex
+	sockPath     string
+	claudeHooks  hooks.ClaudeInjector
 }
 
 // New creates a Daemon. Call Run to start accepting connections.
 func New(db *store.Store, sockPath string) *Daemon {
 	return &Daemon{
-		db:       db,
-		sessions: make(map[string]*sessionProc),
-		sockPath: sockPath,
+		db:          db,
+		sessions:    make(map[string]*sessionProc),
+		tokens:      make(map[string]string),
+		sockPath:    sockPath,
+		claudeHooks: hooks.ClaudeInjector{SocketPath: sockPath},
 	}
 }
 
@@ -97,6 +102,9 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		case protocol.CmdKillSession:
 			d.handleKillSession(conn, cmd.Payload)
 
+		case protocol.CmdHookEvent:
+			d.handleHookEvent(conn, cmd.Payload)
+
 		case protocol.CmdRegisterProject:
 			d.handleRegisterProject(conn, cmd.Payload)
 
@@ -127,7 +135,12 @@ func (d *Daemon) handleNewSession(conn net.Conn, raw json.RawMessage) {
 		return
 	}
 
-	proc, err := startSession(params, d.db)
+	var injector hooks.Injector = hooks.NoopInjector{}
+	if params.Tool == "claude" {
+		injector = d.claudeHooks
+	}
+
+	proc, err := startSession(params, d.db, injector)
 	if err != nil {
 		d.sendErr(conn, fmt.Sprintf("start session: %v", err))
 		return
@@ -135,6 +148,7 @@ func (d *Daemon) handleNewSession(conn net.Conn, raw json.RawMessage) {
 
 	d.mu.Lock()
 	d.sessions[proc.id] = proc
+	d.tokens[proc.hookToken] = proc.id
 	d.mu.Unlock()
 
 	sess, _ := d.db.GetSession(proc.id)

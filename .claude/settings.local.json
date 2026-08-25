@@ -1,0 +1,44 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=ec9612218a362f99 --token=3419468a2f0074f4 --event=PostToolUse",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=ec9612218a362f99 --token=3419468a2f0074f4 --event=PreToolUse",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=ec9612218a362f99 --token=3419468a2f0074f4 --event=Stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=ec9612218a362f99 --token=3419468a2f0074f4 --event=UserPromptSubmit",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

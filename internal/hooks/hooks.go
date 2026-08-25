@@ -1,16 +1,18 @@
-// Package hooks will inject and remove agent CLI hook configuration so the
-// daemon can receive structured lifecycle events from running agents.
-// Claude hook injection per spec §5.3 — not yet implemented.
+// Package hooks manages agent CLI hook configuration so the daemon receives
+// structured lifecycle events from running agents.
 package hooks
 
 // Injector manages hook config for a session's working directory.
 type Injector interface {
-	Inject(sessionID, cwd string) error
+	// Inject writes canopy-managed hooks into the agent's settings file.
+	Inject(sessionID, cwd, hookToken string) error
+	// Remove cleans up canopy-managed hooks for a session.
 	Remove(sessionID string) error
 }
 
-// NoopInjector is a placeholder that satisfies the interface without doing anything.
+// NoopInjector satisfies the interface without doing anything.
+// Used for non-Claude tools or when hook injection is disabled.
 type NoopInjector struct{}
 
-func (NoopInjector) Inject(_, _ string) error { return nil }
-func (NoopInjector) Remove(_ string) error     { return nil }
+func (NoopInjector) Inject(_, _, _ string) error { return nil }
+func (NoopInjector) Remove(_ string) error        { return nil }

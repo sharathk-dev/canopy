@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"os/exec"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
+	"github.com/sharathk-dev/canopy/internal/hooks"
 	"github.com/sharathk-dev/canopy/internal/protocol"
 	"github.com/sharathk-dev/canopy/internal/store"
 )
@@ -17,11 +19,12 @@ const subChanSize = 256
 
 // sessionProc is the daemon's live handle on one running PTY process.
 type sessionProc struct {
-	id string
+	id        string
+	hookToken string // bearer token for Claude hook authentication
 
-	ptmx *os.File      // PTY master
+	ptmx *os.File       // PTY master
 	term vt10x.Terminal // terminal emulator for scrollback
-	mu   sync.Mutex    // protects term + subs
+	mu   sync.Mutex     // protects term + subs
 
 	// subs maps client-id → outbound channel of raw PTY bytes.
 	// Channels are non-blocking: frames are dropped when full rather than blocking the reader.
@@ -31,8 +34,9 @@ type sessionProc struct {
 	exitErr error
 }
 
-// startSession spawns the agent binary in a PTY and registers it in the store.
-func startSession(params protocol.NewSessionParams, db *store.Store) (*sessionProc, error) {
+// startSession spawns the agent binary in a PTY, registers it in the store,
+// and injects lifecycle hooks if the tool supports them.
+func startSession(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector) (*sessionProc, error) {
 	var args []string
 	switch params.Tool {
 	case "claude":
@@ -59,10 +63,11 @@ func startSession(params protocol.NewSessionParams, db *store.Store) (*sessionPr
 	}
 
 	proc := &sessionProc{
-		id:   protocol.NewID(),
-		ptmx: ptmx,
-		subs: make(map[string]chan []byte),
-		done: make(chan struct{}),
+		id:        protocol.NewID(),
+		hookToken: protocol.NewID(), // unique bearer token for this session's hooks
+		ptmx:      ptmx,
+		subs:      make(map[string]chan []byte),
+		done:      make(chan struct{}),
 		// vt10x.New takes (cols, rows); default 80×24 until the client sends a resize.
 		term: vt10x.New(vt10x.WithSize(80, 24)),
 	}
@@ -79,6 +84,14 @@ func startSession(params protocol.NewSessionParams, db *store.Store) (*sessionPr
 	if err := db.CreateSession(sess); err != nil {
 		ptmx.Close()
 		return nil, err
+	}
+
+	// Inject lifecycle hooks so Claude reports state transitions to the daemon.
+	if injector != nil {
+		if err := injector.Inject(proc.id, cmd.Dir, proc.hookToken); err != nil {
+			// Non-fatal: hooks are best-effort; the session still runs.
+			log.Printf("hook inject %s: %v", proc.id, err)
+		}
 	}
 
 	go proc.readLoop(cmd, db)
