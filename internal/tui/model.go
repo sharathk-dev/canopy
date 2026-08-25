@@ -62,6 +62,7 @@ type tickMsg time.Time
 type dataMsg daemonData
 type snapshotMsg string
 type errMsg string
+type daemonDownMsg struct{}
 
 // --- Init ---
 
@@ -92,6 +93,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case dataMsg:
+		m.err = "" // clear any previous daemon-down error
 		m.projects = msg.projects
 		m.worktrees = msg.worktrees
 		m.sessions = msg.sessions
@@ -109,6 +111,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotMsg:
 		m.output = string(msg)
 		m.viewport.SetContent(m.output)
+
+	case daemonDownMsg:
+		m.err = "daemon not running"
+		// Keep ticking so we recover automatically when the daemon starts.
+		cmds = append(cmds, tickCmd())
 
 	case errMsg:
 		m.err = string(msg)
@@ -208,6 +215,15 @@ func (m *Model) refreshSnapshot(cmds *[]tea.Cmd) {
 func (m Model) View() string {
 	if !m.ready {
 		return "Loading…\n"
+	}
+	if m.err == "daemon not running" {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			styleHeader.Width(m.width).Render("canopy"),
+			"\n",
+			styleOutputEmpty.Render("  Daemon is not running.\n\n  Start it with:\n\n    canopy daemon start"),
+			"\n",
+			styleFooter.Width(m.width).Render(styleFooterKey.Render("q")+" quit"),
+		)
 	}
 	if m.err != "" {
 		return fmt.Sprintf("Error: %s\nPress q to quit.\n", m.err)
@@ -336,6 +352,16 @@ func (m *Model) selectedWorktreeCWD() string {
 	return ""
 }
 
+func isDaemonDown(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "no such file") ||
+		strings.Contains(s, "connect:")
+}
+
 func executablePath() string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -356,6 +382,9 @@ func fetchDataCmd(sockPath string) tea.Cmd {
 	return func() tea.Msg {
 		data, err := fetchAll(sockPath)
 		if err != nil {
+			if isDaemonDown(err) {
+				return daemonDownMsg{}
+			}
 			return errMsg(err.Error())
 		}
 		return dataMsg(data)
