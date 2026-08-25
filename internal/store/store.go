@@ -151,6 +151,21 @@ func (s *Store) MarkWorktreeMissing(id string, missing bool) error {
 	return err
 }
 
+func (s *Store) DeleteWorktree(id string) error {
+	_, err := s.db.Exec(`DELETE FROM worktrees WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) GetWorktreeByPath(path string) (protocol.Worktree, error) {
+	row := s.db.QueryRow(
+		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE path=?`, path)
+	var w protocol.Worktree
+	var isMain int
+	err := row.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
+	w.IsMain = isMain != 0
+	return w, err
+}
+
 // --- Sessions ---
 
 func (s *Store) CreateSession(sess protocol.Session) error {

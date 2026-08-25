@@ -1,47 +1,147 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"text/tabwriter"
 
+	"github.com/sharathk-dev/canopy/internal/protocol"
 	"github.com/spf13/cobra"
 )
 
 var worktreeCmd = &cobra.Command{
 	Use:   "worktree",
-	Short: "Manage git worktrees (not yet implemented)",
+	Short: "Manage git worktrees",
 }
+
+var (
+	flagWorktreePath  string
+	flagWorktreeForce bool
+	flagWorktreeRepo  string
+)
 
 var worktreeListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List worktrees for a project",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("worktree list: not yet implemented")
-		return nil
-	},
+	RunE:  runWorktreeList,
 }
 
 var worktreeAddCmd = &cobra.Command{
 	Use:   "add <branch>",
-	Short: "Add a new worktree",
+	Short: "Add a new worktree for a branch",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("worktree add: not yet implemented")
-		return nil
-	},
+	RunE:  runWorktreeAdd,
 }
 
 var worktreeRemoveCmd = &cobra.Command{
 	Use:   "remove <path>",
 	Short: "Remove a worktree",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("worktree remove: not yet implemented")
-		return nil
-	},
+	RunE:  runWorktreeRemove,
 }
 
 func init() {
+	worktreeListCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
+	worktreeAddCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
+	worktreeAddCmd.Flags().StringVar(&flagWorktreePath, "path", "", "Worktree path (default: sibling dir named after branch)")
+	worktreeRemoveCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
+	worktreeRemoveCmd.Flags().BoolVar(&flagWorktreeForce, "force", false, "Remove even if worktree has uncommitted changes")
+
 	worktreeCmd.AddCommand(worktreeListCmd)
 	worktreeCmd.AddCommand(worktreeAddCmd)
 	worktreeCmd.AddCommand(worktreeRemoveCmd)
+}
+
+func runWorktreeList(_ *cobra.Command, _ []string) error {
+	repoPath, err := resolveRepo(flagWorktreeRepo)
+	if err != nil {
+		return err
+	}
+
+	raw, _ := json.Marshal(map[string]string{"repo_path": repoPath})
+	cmd := protocol.Cmd{Type: protocol.CmdListWorktrees, Payload: raw}
+	resp, err := sendCmd(cmd)
+	if err != nil {
+		return err
+	}
+
+	var worktrees []protocol.Worktree
+	if err := json.Unmarshal(resp.Data, &worktrees); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	if len(worktrees) == 0 {
+		fmt.Println("no worktrees found (register first: canopy project add)")
+		return nil
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "BRANCH\tPATH\tMAIN")
+	for _, wt := range worktrees {
+		main := ""
+		if wt.IsMain {
+			main = "✓"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", wt.Branch, wt.Path, main)
+	}
+	return w.Flush()
+}
+
+func runWorktreeAdd(_ *cobra.Command, args []string) error {
+	branch := args[0]
+	repoPath, err := resolveRepo(flagWorktreeRepo)
+	if err != nil {
+		return err
+	}
+
+	params := protocol.AddWorktreeParams{
+		RepoPath: repoPath,
+		Branch:   branch,
+		Path:     flagWorktreePath,
+	}
+	raw, _ := json.Marshal(params)
+	cmd := protocol.Cmd{Type: protocol.CmdAddWorktree, Payload: raw}
+	resp, err := sendCmd(cmd)
+	if err != nil {
+		return err
+	}
+
+	var wt protocol.Worktree
+	if err := json.Unmarshal(resp.Data, &wt); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	fmt.Printf("worktree created: %s\n  branch: %s\n  path:   %s\n", wt.ID, wt.Branch, wt.Path)
+	return nil
+}
+
+func runWorktreeRemove(_ *cobra.Command, args []string) error {
+	path := args[0]
+	repoPath, err := resolveRepo(flagWorktreeRepo)
+	if err != nil {
+		return err
+	}
+
+	params := protocol.RemoveWorktreeParams{
+		RepoPath: repoPath,
+		Path:     path,
+		Force:    flagWorktreeForce,
+	}
+	raw, _ := json.Marshal(params)
+	cmd := protocol.Cmd{Type: protocol.CmdRemoveWorktree, Payload: raw}
+	resp, err := sendCmd(cmd)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return fmt.Errorf("%s", resp.Error)
+	}
+	fmt.Printf("worktree removed: %s\n", path)
+	return nil
+}
+
+func resolveRepo(flagVal string) (string, error) {
+	if flagVal != "" {
+		return flagVal, nil
+	}
+	return os.Getwd()
 }

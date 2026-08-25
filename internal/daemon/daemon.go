@@ -97,8 +97,20 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		case protocol.CmdKillSession:
 			d.handleKillSession(conn, cmd.Payload)
 
+		case protocol.CmdRegisterProject:
+			d.handleRegisterProject(conn, cmd.Payload)
+
+		case protocol.CmdListProjects:
+			d.handleListProjects(conn)
+
 		case protocol.CmdListWorktrees:
 			d.handleListWorktrees(conn, cmd.Payload)
+
+		case protocol.CmdAddWorktree:
+			d.handleAddWorktree(conn, cmd.Payload)
+
+		case protocol.CmdRemoveWorktree:
+			d.handleRemoveWorktree(conn, cmd.Payload)
 
 		default:
 			d.sendErr(conn, fmt.Sprintf("unknown command: %s", cmd.Type))
@@ -213,6 +225,29 @@ func (d *Daemon) handleKillSession(conn net.Conn, raw json.RawMessage) {
 	d.sendOK(conn, nil)
 }
 
+func (d *Daemon) handleRegisterProject(conn net.Conn, raw json.RawMessage) {
+	var params protocol.RegisterProjectParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.RepoPath == "" {
+		d.sendErr(conn, "invalid register_project params: repo_path required")
+		return
+	}
+	proj, err := d.registerProject(params.RepoPath, params.Name)
+	if err != nil {
+		d.sendErr(conn, fmt.Sprintf("register project: %v", err))
+		return
+	}
+	d.sendOK(conn, proj)
+}
+
+func (d *Daemon) handleListProjects(conn net.Conn) {
+	projects, err := d.db.ListProjects()
+	if err != nil {
+		d.sendErr(conn, fmt.Sprintf("list projects: %v", err))
+		return
+	}
+	d.sendOK(conn, projects)
+}
+
 func (d *Daemon) handleListWorktrees(conn net.Conn, raw json.RawMessage) {
 	var params struct {
 		RepoPath string `json:"repo_path"`
@@ -227,6 +262,33 @@ func (d *Daemon) handleListWorktrees(conn net.Conn, raw json.RawMessage) {
 		return
 	}
 	d.sendOK(conn, worktrees)
+}
+
+func (d *Daemon) handleAddWorktree(conn net.Conn, raw json.RawMessage) {
+	var params protocol.AddWorktreeParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.Branch == "" {
+		d.sendErr(conn, "invalid add_worktree params: branch required")
+		return
+	}
+	wt, err := d.addWorktree(params.RepoPath, params.Branch, params.Path)
+	if err != nil {
+		d.sendErr(conn, fmt.Sprintf("add worktree: %v", err))
+		return
+	}
+	d.sendOK(conn, wt)
+}
+
+func (d *Daemon) handleRemoveWorktree(conn net.Conn, raw json.RawMessage) {
+	var params protocol.RemoveWorktreeParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.Path == "" {
+		d.sendErr(conn, "invalid remove_worktree params: path required")
+		return
+	}
+	if err := d.removeWorktree(params.RepoPath, params.Path, params.Force); err != nil {
+		d.sendErr(conn, fmt.Sprintf("remove worktree: %v", err))
+		return
+	}
+	d.sendOK(conn, nil)
 }
 
 // --- wire helpers ---
