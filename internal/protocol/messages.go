@@ -12,6 +12,7 @@ const (
 	CmdRegisterProject = "register_project"
 	CmdListProjects    = "list_projects"
 	CmdHookEvent       = "hook_event"
+	CmdUpdateTitle     = "update_title"
 	CmdListWorktrees   = "list_worktrees"
 	CmdAddWorktree     = "add_worktree"
 	CmdRemoveWorktree  = "remove_worktree"
@@ -71,6 +72,11 @@ const (
 	HookStop             = "Stop"
 	HookUserPromptSubmit = "UserPromptSubmit"
 )
+
+type UpdateTitleParams struct {
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`
+}
 
 type RegisterProjectParams struct {
 	// RepoPath is the absolute path to the git repository root.

@@ -45,6 +45,13 @@ var sessionAttachCmd = &cobra.Command{
 	RunE:  runSessionAttach,
 }
 
+var sessionRenameCmd = &cobra.Command{
+	Use:   "rename <session-id> <title>",
+	Short: "Rename a session (locks the title against auto-update)",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runSessionRename,
+}
+
 var sessionKillCmd = &cobra.Command{
 	Use:   "kill <session-id>",
 	Short: "Kill a running session",
@@ -59,6 +66,7 @@ func init() {
 	sessionCmd.AddCommand(sessionNewCmd)
 	sessionCmd.AddCommand(sessionListCmd)
 	sessionCmd.AddCommand(sessionAttachCmd)
+	sessionCmd.AddCommand(sessionRenameCmd)
 	sessionCmd.AddCommand(sessionKillCmd)
 }
 
@@ -108,10 +116,14 @@ func runSessionList(_ *cobra.Command, _ []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tTOOL\tSTATE\tCWD\tSTARTED")
+	fmt.Fprintln(w, "ID\tTOOL\tSTATE\tTITLE\tSTARTED")
 	for _, s := range sessions {
 		age := time.Since(s.StartedAt).Round(time.Second)
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s ago\n", s.ID, s.Tool, s.State, s.CWD, age)
+		title := s.Title
+		if title == "" {
+			title = s.CWD
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s ago\n", s.ID, s.Tool, s.State, title, age)
 	}
 	return w.Flush()
 }
@@ -195,6 +207,22 @@ func runSessionAttach(_ *cobra.Command, args []string) error {
 	}
 
 	signal.Stop(resizeSig)
+	return nil
+}
+
+func runSessionRename(_ *cobra.Command, args []string) error {
+	params := protocol.UpdateTitleParams{SessionID: args[0], Title: args[1]}
+	raw, _ := json.Marshal(params)
+	cmd := protocol.Cmd{Type: protocol.CmdUpdateTitle, Payload: raw}
+	resp, err := sendCmd(cmd)
+	if err != nil {
+		return err
+	}
+	var sess protocol.Session
+	if err := json.Unmarshal(resp.Data, &sess); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	fmt.Printf("session %s renamed to %q (locked)\n", sess.ID, sess.Title)
 	return nil
 }
 

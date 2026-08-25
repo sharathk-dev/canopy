@@ -105,6 +105,9 @@ func (d *Daemon) handleConn(conn net.Conn) {
 		case protocol.CmdHookEvent:
 			d.handleHookEvent(conn, cmd.Payload)
 
+		case protocol.CmdUpdateTitle:
+			d.handleUpdateTitle(conn, cmd.Payload)
+
 		case protocol.CmdRegisterProject:
 			d.handleRegisterProject(conn, cmd.Payload)
 

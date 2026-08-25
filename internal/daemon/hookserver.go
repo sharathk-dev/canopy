@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/sharathk-dev/canopy/internal/protocol"
 )
@@ -26,9 +28,42 @@ func (d *Daemon) handleHookEvent(conn net.Conn, raw json.RawMessage) {
 		return
 	}
 
-	newState := hookStateTransition(params.EventType, params.Data)
-	if newState == "" {
-		d.sendOK(conn, nil)
+	sess, err := d.db.GetSession(params.SessionID)
+	if err != nil {
+		d.sendErr(conn, fmt.Sprintf("session not found: %v", err))
+		return
+	}
+
+	changed := false
+
+	// Auto-title from first user prompt.
+	if params.EventType == protocol.HookUserPromptSubmit && !sess.TitleLocked && sess.Title == "" {
+		if title := extractTitle(params.Data); title != "" {
+			sess.Title = title
+			changed = true
+		}
+	}
+
+	// State transition.
+	if newState := hookStateTransition(params.EventType); newState != "" && sess.State != newState {
+		sess.State = newState
+		changed = true
+	}
+
+	if changed {
+		if err := d.db.UpdateSession(sess); err != nil {
+			log.Printf("hook: update session %s: %v", params.SessionID, err)
+		}
+	}
+
+	d.sendOK(conn, map[string]string{"state": sess.State, "title": sess.Title})
+}
+
+// handleUpdateTitle handles a manual rename request (sets TitleLocked = true).
+func (d *Daemon) handleUpdateTitle(conn net.Conn, raw json.RawMessage) {
+	var params protocol.UpdateTitleParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.SessionID == "" {
+		d.sendErr(conn, "invalid update_title params")
 		return
 	}
 
@@ -37,47 +72,49 @@ func (d *Daemon) handleHookEvent(conn net.Conn, raw json.RawMessage) {
 		d.sendErr(conn, fmt.Sprintf("session not found: %v", err))
 		return
 	}
-	if sess.State == newState {
-		d.sendOK(conn, nil)
+
+	sess.Title = strings.TrimSpace(params.Title)
+	sess.TitleLocked = true
+	if err := d.db.UpdateSession(sess); err != nil {
+		d.sendErr(conn, fmt.Sprintf("update session: %v", err))
 		return
 	}
-
-	sess.State = newState
-	if err := d.db.UpdateSession(sess); err != nil {
-		log.Printf("hook: update session %s state: %v", params.SessionID, err)
-	}
-
-	d.sendOK(conn, map[string]string{"state": newState})
+	d.sendOK(conn, sess)
 }
 
 // hookStateTransition maps a Claude hook event type to a session state.
 // Returns "" if no state change is warranted.
-func hookStateTransition(eventType string, data json.RawMessage) string {
+func hookStateTransition(eventType string) string {
 	switch eventType {
-	case protocol.HookPreToolUse, protocol.HookUserPromptSubmit:
+	case protocol.HookPreToolUse, protocol.HookPostToolUse, protocol.HookUserPromptSubmit:
 		return protocol.StateRunning
-
-	case protocol.HookPostToolUse:
-		// Agent finished a tool call but may issue more; stay running.
-		return protocol.StateRunning
-
 	case protocol.HookStop:
-		// Parse stop reason if available.
-		var payload struct {
-			StopReason string `json:"stop_reason"`
-		}
-		if len(data) > 0 {
-			json.Unmarshal(data, &payload) //nolint:errcheck
-		}
-		switch payload.StopReason {
-		case "end_turn", "max_tokens", "":
-			// Agent finished its turn — waiting for the user's next prompt.
-			return protocol.StateNeedsInput
-		default:
-			return protocol.StateNeedsInput
-		}
-
+		return protocol.StateNeedsInput
 	default:
 		return ""
 	}
+}
+
+// extractTitle derives a short title from a UserPromptSubmit payload.
+// Claude passes {"prompt": "..."} on stdin.
+func extractTitle(data json.RawMessage) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil || payload.Prompt == "" {
+		return ""
+	}
+	return truncate(strings.TrimSpace(payload.Prompt), 60)
+}
+
+// truncate cuts s to at most n runes, appending "…" if truncated.
+func truncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:n]) + "…"
 }

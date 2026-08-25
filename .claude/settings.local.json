@@ -8,6 +8,14 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=9ef890e9f2e1323e --token=41615c95d9046cb1 --event=PostToolUse",
+            "type": "command"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -15,6 +23,14 @@
         "hooks": [
           {
             "command": "canopy _hook --session=ec9612218a362f99 --token=3419468a2f0074f4 --event=PreToolUse",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=9ef890e9f2e1323e --token=41615c95d9046cb1 --event=PreToolUse",
             "type": "command"
           }
         ]
@@ -28,6 +44,14 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=9ef890e9f2e1323e --token=41615c95d9046cb1 --event=Stop",
+            "type": "command"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -35,6 +59,14 @@
         "hooks": [
           {
             "command": "canopy _hook --session=ec9612218a362f99 --token=3419468a2f0074f4 --event=UserPromptSubmit",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "canopy _hook --session=9ef890e9f2e1323e --token=41615c95d9046cb1 --event=UserPromptSubmit",
             "type": "command"
           }
         ]
