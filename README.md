@@ -83,17 +83,19 @@ Claude hook configuration is written to `.claude/settings.local.json` in each se
 
 ## Build from source
 
-Requires Go:
+Requires Go. The repository includes a conventional `Makefile`:
 
 ```bash
-go test ./...
-go build -o canopy ./cmd/canopy
+make test              # run tests
+make build             # create ./canopy
+make install           # install to ~/.local/bin/canopy
+make clean             # remove ./canopy
 ```
 
-To install a locally built binary:
+You can customize the install location:
 
 ```bash
-INSTALL_DIR="$HOME/.local/bin" go build -o "$INSTALL_DIR/canopy" ./cmd/canopy
+make install PREFIX="$HOME/.local"
 ```
 
 ## Architecture
