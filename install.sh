@@ -1,46 +1,84 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-BINARY="canopy"
+# Install the latest published Canopy binary.
+#
+#   curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/install.sh | bash
+#   VERSION=v0.1.0 bash install.sh
+
+REPO="${REPO:-sharathk-dev/canopy}"
+VERSION="${VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+BINARY="canopy"
 
-need_cmd() {
-    if ! command -v "$1" &>/dev/null; then
-        echo "error: '$1' is required but not installed." >&2
-        exit 1
-    fi
+die() {
+    echo "error: $*" >&2
+    exit 1
 }
 
-need_cmd go
+command -v curl >/dev/null 2>&1 || die "curl is required"
 
-mkdir -p "$INSTALL_DIR"
+case "$(uname -s)" in
+    Darwin) os="darwin" ;;
+    Linux)  os="linux" ;;
+    *)      die "unsupported operating system: $(uname -s) (use macOS or Linux)" ;;
+esac
 
-echo "Building $BINARY..."
-go build -o "$INSTALL_DIR/$BINARY" ./cmd/canopy
-echo "Removing stale copies..."
-for stale in /usr/local/bin/$BINARY /usr/bin/$BINARY; do
-    [ -f "$stale" ] && sudo rm -f "$stale" && echo "  removed $stale" || true
-done
+case "$(uname -m)" in
+    x86_64|amd64) arch="amd64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) die "unsupported CPU architecture: $(uname -m) (use amd64 or arm64)" ;;
+esac
 
-# Add to shell profile if not already in PATH.
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    PROFILE=""
-    if [ -f "$HOME/.zshrc" ]; then
-        PROFILE="$HOME/.zshrc"
-    elif [ -f "$HOME/.bashrc" ]; then
-        PROFILE="$HOME/.bashrc"
-    fi
-
-    if [ -n "$PROFILE" ]; then
-        echo "" >> "$PROFILE"
-        echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$PROFILE"
-        echo "Added $INSTALL_DIR to PATH in $PROFILE"
-        echo "Run: source $PROFILE"
-    else
-        echo "warning: could not find shell profile. Add this manually:"
-        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-    fi
+asset="${BINARY}-${os}-${arch}"
+if [ "$VERSION" = "latest" ]; then
+    url="https://github.com/${REPO}/releases/latest/download/${asset}"
+else
+    url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
 fi
 
-echo "Installed: $INSTALL_DIR/$BINARY"
-echo "Run: $BINARY --help"
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+
+echo "Downloading ${asset}..."
+curl --fail --location --silent --show-error --retry 3 "$url" --output "$tmp" \
+    || die "could not download ${url}; check that this version has a published ${asset} release"
+
+mkdir -p "$INSTALL_DIR"
+install -m 0755 "$tmp" "${INSTALL_DIR}/${BINARY}"
+trap - EXIT
+
+echo "Installed ${INSTALL_DIR}/${BINARY}"
+
+case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *)
+        profile=""
+        shell_name="${SHELL##*/}"
+        case "$shell_name" in
+            zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+            bash)
+                if [ "$(uname -s)" = "Darwin" ]; then
+                    profile="$HOME/.bash_profile"
+                else
+                    profile="$HOME/.bashrc"
+                fi
+                ;;
+        esac
+
+        path_line="export PATH=\"${INSTALL_DIR}:\$PATH\""
+        if [ -n "$profile" ]; then
+            touch "$profile"
+            if ! grep -Fqx "$path_line" "$profile"; then
+                printf '\n# Canopy\n%s\n' "$path_line" >> "$profile"
+            fi
+            echo "Added ${INSTALL_DIR} to ${profile}"
+            echo "Run: source ${profile} or open a new terminal"
+        else
+            echo "Add this to your shell profile:"
+            echo "  ${path_line}"
+        fi
+        ;;
+esac
+
+echo "Run: ${BINARY} --help"
