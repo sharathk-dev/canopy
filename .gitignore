@@ -2,3 +2,4 @@
 /cmd/tool/tool
 *.db
 *.pid
+.claude/settings.local.json
