@@ -41,6 +41,8 @@ func New(db *store.Store, sockPath string) *Daemon {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	// Clean up any sessions whose processes died since the last daemon run
+	// (e.g. after a binary update that forced the previous daemon to restart).
 	d.reconcileDeadSessions()
 
 	os.Remove(d.sockPath)

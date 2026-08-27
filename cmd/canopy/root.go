@@ -1,18 +1,18 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	internaldaemon "github.com/sharathk-dev/canopy/internal/daemon"
 	"github.com/sharathk-dev/canopy/internal/datadir"
 	"github.com/sharathk-dev/canopy/internal/protocol"
-	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/sharathk-dev/canopy/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -30,23 +30,25 @@ var uiCmd = &cobra.Command{
 }
 
 func runUI(_ *cobra.Command, _ []string) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
 
-	// Start an embedded daemon if one isn't running or if the existing one
-	// was built from an older binary (e.g. user just installed a new version).
-	if !daemonCurrent() {
-		db, err := store.Open(datadir.DBPath())
-		if err != nil {
-			return fmt.Errorf("open store: %w", err)
+	// Ensure a current daemon is running as a background process.
+	// The daemon survives TUI exit so sessions (and their PTYs) stay alive.
+	if !daemonCurrent(exe) {
+		stopExistingDaemon() // kill stale daemon if one is running
+		if err := startDaemonProcess(exe); err != nil {
+			return fmt.Errorf("start daemon: %w", err)
 		}
-		d := internaldaemon.New(db, datadir.SocketPath())
-		go func() {
-			_ = d.Run(ctx)
-			db.Close()
-		}()
-		// Give the embedded daemon a moment to bind the socket.
-		time.Sleep(80 * time.Millisecond)
+		// Wait for the daemon to bind its socket.
+		for i := 0; i < 20; i++ {
+			time.Sleep(50 * time.Millisecond)
+			if daemonCurrent(exe) {
+				break
+			}
+		}
 	}
 
 	m := tui.New(datadir.SocketPath(), datadir.DBPath())
@@ -58,17 +60,47 @@ func runUI(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// startDaemonProcess forks the current binary as a detached daemon process.
+func startDaemonProcess(exe string) error {
+	proc, err := os.StartProcess(exe, []string{exe, "daemon", "_run"},
+		&os.ProcAttr{
+			Files: []*os.File{nil, nil, nil},
+			Sys:   &syscall.SysProcAttr{Setsid: true},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return proc.Release()
+}
+
+// stopExistingDaemon sends SIGTERM to any daemon recorded in the PID file.
+func stopExistingDaemon() {
+	data, err := os.ReadFile(datadir.PIDPath())
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return
+	}
+	if proc, err := os.FindProcess(pid); err == nil {
+		_ = proc.Signal(syscall.SIGTERM)
+		// Brief wait so the socket is released before we re-bind.
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 // daemonCurrent returns true if a daemon is running AND was built from the
 // same binary as the current process. Returns false if no daemon is reachable
 // or if the daemon binary is older (stale install).
-func daemonCurrent() bool {
+func daemonCurrent(exe string) bool {
 	conn, err := net.Dial("unix", datadir.SocketPath())
 	if err != nil {
-		return false // not running
+		return false
 	}
 	defer conn.Close()
 
-	// Ask the daemon for its binary mtime.
 	payload, _ := json.Marshal(protocol.Cmd{Type: protocol.CmdVersion})
 	if err := protocol.WriteFrame(conn, protocol.FrameJSON, payload); err != nil {
 		return false
@@ -79,18 +111,13 @@ func daemonCurrent() bool {
 	}
 	var resp protocol.Response
 	if err := json.Unmarshal(data, &resp); err != nil || !resp.OK {
-		return false // old daemon without CmdVersion support
+		return false
 	}
 	var ver protocol.VersionResponse
 	if err := json.Unmarshal(resp.Data, &ver); err != nil {
 		return false
 	}
 
-	// Compare with current binary mtime.
-	exe, err := os.Executable()
-	if err != nil {
-		return true // can't tell; assume current
-	}
 	fi, err := os.Stat(exe)
 	if err != nil {
 		return true
