@@ -50,6 +50,9 @@ type Model struct {
 	sessionLocked   bool // when true, keys are forwarded to the active PTY
 	lockedSessionID string
 	confirmKillID   string
+	titleEditingID  string
+	titleInput      string
+	newSessionCWD   string
 	daemonDown      bool
 	err             string
 }
@@ -170,6 +173,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.newSessionCWD != "" {
+		switch msg.String() {
+		case "enter":
+			cwd := m.newSessionCWD
+			title := strings.TrimSpace(m.titleInput)
+			if title == "" {
+				title = "session_" + protocol.NewID()[:5]
+			}
+			m.newSessionCWD = ""
+			m.titleInput = ""
+			rows, cols := m.panelSize()
+			cmds = append(cmds, createSessionCmd(m.sockPath, cwd, title, rows, cols))
+		case "esc":
+			m.newSessionCWD = ""
+			m.titleInput = ""
+		case "backspace", "ctrl+h":
+			if len(m.titleInput) > 0 {
+				runes := []rune(m.titleInput)
+				m.titleInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				m.titleInput += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	if m.titleEditingID != "" {
+		switch msg.String() {
+		case "enter":
+			if title := strings.TrimSpace(m.titleInput); title != "" {
+				cmds = append(cmds, updateTitleCmd(m.sockPath, m.titleEditingID, title), fetchDataCmd(m.dbPath))
+				m.titleEditingID = ""
+				m.titleInput = ""
+			}
+		case "esc":
+			m.titleEditingID = ""
+			m.titleInput = ""
+		case "backspace", "ctrl+h":
+			if len(m.titleInput) > 0 {
+				runes := []rune(m.titleInput)
+				m.titleInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				m.titleInput += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.confirmKillID != "" {
 		switch msg.String() {
 		case "y", "enter":
@@ -235,13 +290,19 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	case "n":
 		if cwd := m.selectedCWD(); cwd != "" {
-			rows, cols := m.panelSize()
-			return m, createSessionCmd(m.sockPath, cwd, rows, cols)
+			m.newSessionCWD = cwd
+			m.titleInput = ""
 		}
 
 	case "x":
 		if sess := selectedSession(m.items, m.cursor); sess != nil {
 			m.confirmKillID = sess.ID
+		}
+
+	case "e":
+		if sess := selectedSession(m.items, m.cursor); sess != nil {
+			m.titleEditingID = sess.ID
+			m.titleInput = sess.Title
 		}
 
 	case "r":
@@ -348,7 +409,23 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	var hints []string
-	if m.confirmKillID != "" {
+	if m.newSessionCWD != "" {
+		left := "new title: " + m.titleInput
+		right := styleFooterKey.Render("enter") + " start   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.titleEditingID != "" {
+		left := "title: " + m.titleInput
+		right := styleFooterKey.Render("enter") + " save   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.confirmKillID != "" {
 		hints = []string{
 			styleFooterKey.Render("y/enter") + " confirm kill",
 			styleFooterKey.Render("n/esc") + " cancel",
@@ -582,13 +659,24 @@ func resizeSessionCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
 	}
 }
 
-func createSessionCmd(sockPath, cwd string, rows, cols uint16) tea.Cmd {
+func updateTitleCmd(sockPath, sessionID, title string) tea.Cmd {
+	return func() tea.Msg {
+		p, _ := json.Marshal(protocol.UpdateTitleParams{SessionID: sessionID, Title: title})
+		if _, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdUpdateTitle, Payload: p}); err != nil {
+			return errMsg("save title: " + err.Error())
+		}
+		return nil
+	}
+}
+
+func createSessionCmd(sockPath, cwd, title string, rows, cols uint16) tea.Cmd {
 	return func() tea.Msg {
 		p, _ := json.Marshal(protocol.NewSessionParams{
-			Tool: "claude",
-			CWD:  cwd,
-			Rows: rows,
-			Cols: cols,
+			Tool:  "claude",
+			CWD:   cwd,
+			Title: title,
+			Rows:  rows,
+			Cols:  cols,
 		})
 		raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdNewSession, Payload: p})
 		if err != nil {

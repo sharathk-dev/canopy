@@ -27,7 +27,6 @@ type Session struct {
 	CWD          string
 	CLISessionID string
 	Title        string
-	TitleLocked  bool
 	State        string
 	Archived     bool
 	PID          int

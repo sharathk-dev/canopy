@@ -29,8 +29,8 @@ type treeItem struct {
 func buildTree(
 	projects []protocol.Project,
 	worktrees map[string][]protocol.Worktree, // repoPath → []Worktree
-	sessions map[string][]protocol.Session,   // worktreeID → []Session
-	expanded map[string]bool,                 // key → expanded
+	sessions map[string][]protocol.Session, // worktreeID → []Session
+	expanded map[string]bool, // key → expanded
 ) []treeItem {
 	var items []treeItem
 	for i := range projects {
@@ -126,17 +126,19 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 		}
 		dot := stateDot(item.session.State)
 		label := stateLabel(item.session.State)
-		// "    claude · running"
-		raw := fmt.Sprintf("    %s · %s", tool, item.session.State)
+		name := item.session.Title
+		if name == "" {
+			name = tool
+		}
+		// Use the session title when available, while keeping the state visible.
 		if selected {
 			// For selected, rebuild without style so we can apply bg
-			_ = raw
-			content = fmt.Sprintf("    %s  %s", tool, item.session.State)
+			content = fmt.Sprintf("    %s  %s", name, item.session.State)
 			_ = dot
 			_ = label
 		} else {
 			content = fmt.Sprintf("    %s · %s %s",
-				lipgloss.NewStyle().Foreground(colorText).Render(tool),
+				lipgloss.NewStyle().Foreground(colorText).Render(name),
 				label,
 				dot,
 			)

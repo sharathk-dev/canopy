@@ -64,7 +64,7 @@ func runHook(_ *cobra.Command, _ []string) error {
 		changed = true
 	}
 
-	if flagHookEvent == "UserPromptSubmit" && !sess.TitleLocked && sess.Title == "" {
+	if flagHookEvent == "UserPromptSubmit" && sess.Title == "" {
 		if title := extractHookTitle(data); title != "" {
 			sess.Title = title
 			changed = true

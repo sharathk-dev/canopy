@@ -85,12 +85,13 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 		Tool:         params.Tool,
 		CWD:          params.CWD,
 		CLISessionID: params.CLISessionID,
+		Title:        params.Title,
 		State:        protocol.StateRunning,
 		PID:          cmd.Process.Pid,
 		StartedAt:    time.Now(),
 	}
 	if existing != nil {
-		// Preserve user-visible metadata such as title and title lock.
+		// Preserve user-visible metadata such as the title.
 		sess = *existing
 		sess.PID = cmd.Process.Pid
 		sess.State = protocol.StateRunning

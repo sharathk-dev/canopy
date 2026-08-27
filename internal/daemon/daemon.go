@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -141,6 +142,8 @@ func (d *Daemon) handleConn(conn net.Conn) {
 			d.handleSessionSnapshot(conn, cmd.Payload)
 		case protocol.CmdResizeSession:
 			d.handleResizeSession(conn, cmd.Payload)
+		case protocol.CmdUpdateTitle:
+			d.handleUpdateTitle(conn, cmd.Payload)
 		default:
 			d.sendErr(conn, fmt.Sprintf("unknown command: %s", cmd.Type))
 		}
@@ -313,6 +316,30 @@ func (d *Daemon) handleResizeSession(conn net.Conn, raw json.RawMessage) {
 		return
 	}
 	_ = proc.resize(params.Rows, params.Cols)
+	d.sendOK(conn, nil)
+}
+
+func (d *Daemon) handleUpdateTitle(conn net.Conn, raw json.RawMessage) {
+	var params protocol.UpdateTitleParams
+	if err := json.Unmarshal(raw, &params); err != nil || params.SessionID == "" {
+		d.sendErr(conn, "invalid update_title params")
+		return
+	}
+	title := strings.TrimSpace(params.Title)
+	if title == "" {
+		d.sendErr(conn, "title cannot be empty")
+		return
+	}
+	sess, err := d.db.GetSession(params.SessionID)
+	if err != nil {
+		d.sendErr(conn, "session not found")
+		return
+	}
+	sess.Title = title
+	if err := d.db.UpdateSession(sess); err != nil {
+		d.sendErr(conn, fmt.Sprintf("save title: %v", err))
+		return
+	}
 	d.sendOK(conn, nil)
 }
 

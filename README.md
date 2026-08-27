@@ -36,7 +36,7 @@ Inside the TUI:
 
 | Key | Action |
 | --- | --- |
-| `n` | Start a Claude session in the selected worktree |
+| `n` | Name and start a Claude session in the selected worktree; blank uses a random `session_` name |
 | `Enter` | Expand a project/worktree or attach to a session |
 | `Tab` | Switch between the project tree and output panel |
 | `x` | Request session termination; press `y`/Enter to confirm |

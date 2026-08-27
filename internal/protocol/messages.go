@@ -49,6 +49,7 @@ type NewSessionParams struct {
 	CWD        string `json:"cwd"`
 	// CLISessionID requests resuming a tool-native session (currently Claude).
 	CLISessionID string `json:"cli_session_id,omitempty"`
+	Title        string `json:"title,omitempty"`
 	Rows         uint16 `json:"rows"` // 0 = use default
 	Cols         uint16 `json:"cols"` // 0 = use default
 }
