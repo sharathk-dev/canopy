@@ -41,9 +41,9 @@ func New(db *store.Store, sockPath string) *Daemon {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
-	// Clean up any sessions whose processes died since the last daemon run
-	// (e.g. after a binary update that forced the previous daemon to restart).
-	d.reconcileDeadSessions()
+	// Recreate persisted sessions before accepting clients. This gives Canopy
+	// browser-like restore semantics when the daemon or TUI is relaunched.
+	d.restoreSessions()
 
 	os.Remove(d.sockPath)
 	ln, err := net.Listen("unix", d.sockPath)
@@ -69,6 +69,41 @@ func (d *Daemon) Run(ctx context.Context) error {
 		}
 		go d.handleConn(conn)
 	}
+}
+
+func (d *Daemon) restoreSessions() {
+	sessions, err := d.db.ListActiveSessions()
+	if err != nil {
+		return
+	}
+
+	for _, sess := range sessions {
+		// A previous daemon may have left the child process alive. Stop it before
+		// replacing it, otherwise restoring would create duplicate Claude tabs.
+		if sess.PID > 0 {
+			if old, err := os.FindProcess(sess.PID); err == nil {
+				_ = old.Signal(syscall.SIGTERM)
+			}
+		}
+
+		injector := hooks.Injector(hooks.NoopInjector{})
+		if sess.Tool == "claude" {
+			injector = d.injector
+		}
+		proc, err := restoreSession(sess, d.db, injector)
+		if err != nil {
+			sess.State = protocol.StateTerminated
+			sess.Archived = true
+			_ = d.db.UpdateSession(sess)
+			continue
+		}
+		d.mu.Lock()
+		d.sessions[proc.id] = proc
+		d.mu.Unlock()
+	}
+
+	// Also clean hooks for sessions archived by an earlier daemon run.
+	d.reconcileDeadSessions()
 }
 
 func (d *Daemon) handleConn(conn net.Conn) {
@@ -218,6 +253,9 @@ func (d *Daemon) handleKillSession(conn net.Conn, raw json.RawMessage) {
 
 	// Always archive in DB regardless of whether the daemon had it in memory.
 	if sess, err := d.db.GetSession(params.SessionID); err == nil {
+		if ci, ok := d.injector.(hooks.ClaudeInjector); ok {
+			_ = ci.RemoveFromCWD(sess.ID, sess.CWD)
+		}
 		sess.State = protocol.StateTerminated
 		sess.Archived = true
 		_ = d.db.UpdateSession(sess)
@@ -293,6 +331,18 @@ func (d *Daemon) sendErr(conn net.Conn, msg string) {
 // alive as terminated. This cleans up stale DB state after an unclean shutdown
 // (e.g. when the embedded daemon was killed along with the TUI process).
 func (d *Daemon) reconcileDeadSessions() {
+	// Archived sessions can still have hooks left behind if the daemon was
+	// stopped before waitLoop performed its cleanup. Remove those first.
+	if sessions, err := d.db.ListSessions(); err == nil {
+		if ci, ok := d.injector.(hooks.ClaudeInjector); ok {
+			for _, sess := range sessions {
+				if sess.Archived {
+					_ = ci.RemoveFromCWD(sess.ID, sess.CWD)
+				}
+			}
+		}
+	}
+
 	sessions, err := d.db.ListActiveSessions()
 	if err != nil {
 		return
@@ -310,6 +360,9 @@ func (d *Daemon) reconcileDeadSessions() {
 			sess.State = protocol.StateTerminated
 			sess.Archived = true
 			_ = d.db.UpdateSession(sess)
+			if ci, ok := d.injector.(hooks.ClaudeInjector); ok {
+				_ = ci.RemoveFromCWD(sess.ID, sess.CWD)
+			}
 			continue
 		}
 		// Signal 0 checks liveness without disturbing the process.
@@ -317,6 +370,9 @@ func (d *Daemon) reconcileDeadSessions() {
 			sess.State = protocol.StateTerminated
 			sess.Archived = true
 			_ = d.db.UpdateSession(sess)
+			if ci, ok := d.injector.(hooks.ClaudeInjector); ok {
+				_ = ci.RemoveFromCWD(sess.ID, sess.CWD)
+			}
 		}
 	}
 }

@@ -57,6 +57,13 @@ func runHook(_ *cobra.Command, _ []string) error {
 
 	changed := false
 
+	// Claude sends its native session UUID in every hook payload. Store it
+	// separately from Canopy's session ID so the session can be resumed later.
+	if cliSessionID := extractHookSessionID(data); cliSessionID != "" && sess.CLISessionID != cliSessionID {
+		sess.CLISessionID = cliSessionID
+		changed = true
+	}
+
 	if flagHookEvent == "UserPromptSubmit" && !sess.TitleLocked && sess.Title == "" {
 		if title := extractHookTitle(data); title != "" {
 			sess.Title = title
@@ -97,6 +104,19 @@ func extractHookTitle(data json.RawMessage) string {
 		return ""
 	}
 	return hookTruncate(strings.TrimSpace(payload.Prompt), 60)
+}
+
+func extractHookSessionID(data json.RawMessage) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.SessionID)
 }
 
 func hookTruncate(s string, n int) string {

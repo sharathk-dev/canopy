@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -40,6 +42,13 @@ var sessionAttachCmd = &cobra.Command{
 	RunE:  runSessionAttach,
 }
 
+var sessionResumeCmd = &cobra.Command{
+	Use:   "resume <session-id>",
+	Short: "Resume a saved Claude session",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runSessionResume,
+}
+
 var sessionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List active sessions",
@@ -59,6 +68,7 @@ func init() {
 
 	sessionCmd.AddCommand(sessionNewCmd)
 	sessionCmd.AddCommand(sessionAttachCmd)
+	sessionCmd.AddCommand(sessionResumeCmd)
 	sessionCmd.AddCommand(sessionListCmd)
 	sessionCmd.AddCommand(sessionKillCmd)
 }
@@ -87,6 +97,39 @@ func runSessionNew(_ *cobra.Command, _ []string) error {
 
 	fmt.Printf("session %s started\n", sess.ID)
 	return runSessionAttach(nil, []string{sess.ID})
+}
+
+func runSessionResume(_ *cobra.Command, args []string) error {
+	db, err := store.Open(datadir.DBPath())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	sess, err := db.GetSession(args[0])
+	db.Close()
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	if sess.Tool != "claude" || sess.CLISessionID == "" {
+		return fmt.Errorf("session has no saved Claude session ID")
+	}
+
+	params := protocol.NewSessionParams{
+		WorktreeID:   sess.WorktreeID,
+		Tool:         sess.Tool,
+		CWD:          sess.CWD,
+		CLISessionID: sess.CLISessionID,
+	}
+	raw, _ := json.Marshal(params)
+	resp, err := sendDaemonCmd(protocol.Cmd{Type: protocol.CmdNewSession, Payload: raw})
+	if err != nil {
+		return fmt.Errorf("daemon not running — start it with: canopy daemon start\n%w", err)
+	}
+	var resumed protocol.Session
+	if err := json.Unmarshal(resp.Data, &resumed); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	fmt.Printf("session %s resumed from %s\n", resumed.ID, sess.CLISessionID)
+	return runSessionAttach(nil, []string{resumed.ID})
 }
 
 func runSessionAttach(_ *cobra.Command, args []string) error {
@@ -205,6 +248,17 @@ func runSessionList(_ *cobra.Command, _ []string) error {
 }
 
 func runSessionKill(_ *cobra.Command, args []string) error {
+	fmt.Printf("Kill session %s? [y/N] ", args[0])
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && len(answer) == 0 {
+		return err
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" {
+		fmt.Println("cancelled")
+		return nil
+	}
+
 	// Try daemon first so it can cleanly tear down the PTY.
 	params := protocol.KillSessionParams{SessionID: args[0]}
 	raw, _ := json.Marshal(params)

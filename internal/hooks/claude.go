@@ -75,7 +75,9 @@ func (ci ClaudeInjector) RemoveFromCWD(sessionID, cwd string) error {
 
 	changed := false
 	for event, val := range hooks {
-		hooks[event], changed = removeHookEntry(val, sessionID)
+		var eventChanged bool
+		hooks[event], eventChanged = removeHookEntry(val, sessionID)
+		changed = changed || eventChanged
 	}
 	if !changed {
 		return nil

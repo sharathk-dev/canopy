@@ -27,9 +27,29 @@ type sessionProc struct {
 }
 
 func startSession(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector) (*sessionProc, error) {
+	return startSessionRecord(params, db, injector, nil)
+}
+
+// restoreSession recreates a persisted session after the daemon has restarted.
+// The Canopy session ID is retained so the TUI still refers to the same row.
+func restoreSession(sess protocol.Session, db *store.Store, injector hooks.Injector) (*sessionProc, error) {
+	params := protocol.NewSessionParams{
+		WorktreeID:   sess.WorktreeID,
+		Tool:         sess.Tool,
+		CWD:          sess.CWD,
+		CLISessionID: sess.CLISessionID,
+	}
+	return startSessionRecord(params, db, injector, &sess)
+}
+
+func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector, existing *protocol.Session) (*sessionProc, error) {
 	hookToken := protocol.NewID()
 
-	cmd := exec.Command(params.Tool)
+	args := []string{}
+	if params.Tool == "claude" && params.CLISessionID != "" {
+		args = []string{"--resume", params.CLISessionID}
+	}
+	cmd := exec.Command(params.Tool, args...)
 	cmd.Dir = params.CWD
 
 	ptmx, err := pty.Start(cmd)
@@ -46,8 +66,12 @@ func startSession(params protocol.NewSessionParams, db *store.Store, injector ho
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
 
+	procID := protocol.NewID()
+	if existing != nil {
+		procID = existing.ID
+	}
 	proc := &sessionProc{
-		id:        protocol.NewID(),
+		id:        procID,
 		hookToken: hookToken,
 		ptmx:      ptmx,
 		term:      vt10x.New(vt10x.WithSize(int(cols), int(rows))),
@@ -56,17 +80,31 @@ func startSession(params protocol.NewSessionParams, db *store.Store, injector ho
 	}
 
 	sess := protocol.Session{
-		ID:         proc.id,
-		WorktreeID: params.WorktreeID,
-		Tool:       params.Tool,
-		CWD:        params.CWD,
-		State:      protocol.StateRunning,
-		PID:        cmd.Process.Pid,
-		StartedAt:  time.Now(),
+		ID:           proc.id,
+		WorktreeID:   params.WorktreeID,
+		Tool:         params.Tool,
+		CWD:          params.CWD,
+		CLISessionID: params.CLISessionID,
+		State:        protocol.StateRunning,
+		PID:          cmd.Process.Pid,
+		StartedAt:    time.Now(),
 	}
-	if err := db.CreateSession(sess); err != nil {
+	if existing != nil {
+		// Preserve user-visible metadata such as title and title lock.
+		sess = *existing
+		sess.PID = cmd.Process.Pid
+		sess.State = protocol.StateRunning
+		sess.Archived = false
+	}
+	var dbErr error
+	if existing == nil {
+		dbErr = db.CreateSession(sess)
+	} else {
+		dbErr = db.UpdateSession(sess)
+	}
+	if dbErr != nil {
 		ptmx.Close()
-		return nil, err
+		return nil, dbErr
 	}
 
 	_ = injector.Inject(proc.id, params.CWD, hookToken)

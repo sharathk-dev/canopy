@@ -49,6 +49,7 @@ type Model struct {
 	jumpToSession   bool // set after n key; auto-navigate to first new session
 	sessionLocked   bool // when true, keys are forwarded to the active PTY
 	lockedSessionID string
+	confirmKillID   string
 	daemonDown      bool
 	err             string
 }
@@ -169,6 +170,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.confirmKillID != "" {
+		switch msg.String() {
+		case "y", "enter":
+			id := m.confirmKillID
+			m.confirmKillID = ""
+			cmds = append(cmds, killSessionCmd(m.sockPath, m.dbPath, id, 0))
+		case "n", "esc":
+			m.confirmKillID = ""
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -228,7 +241,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	case "x":
 		if sess := selectedSession(m.items, m.cursor); sess != nil {
-			cmds = append(cmds, killSessionCmd(m.sockPath, m.dbPath, sess.ID, sess.PID))
+			m.confirmKillID = sess.ID
 		}
 
 	case "r":
@@ -335,7 +348,12 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	var hints []string
-	if m.sessionLocked {
+	if m.confirmKillID != "" {
+		hints = []string{
+			styleFooterKey.Render("y/enter") + " confirm kill",
+			styleFooterKey.Render("n/esc") + " cancel",
+		}
+	} else if m.sessionLocked {
 		hints = []string{
 			styleFooterKey.Render("ctrl+q") + " back to tree",
 			"  typing goes to Claude",
@@ -555,7 +573,6 @@ func fetchSnapshotCmd(sockPath, sessionID string) tea.Cmd {
 		return snapshotMsg(text)
 	}
 }
-
 
 func resizeSessionCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
 	return func() tea.Msg {

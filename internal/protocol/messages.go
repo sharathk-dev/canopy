@@ -14,9 +14,9 @@ const (
 	CmdRegisterProject = "register_project"
 	CmdListProjects    = "list_projects"
 	CmdHookEvent       = "hook_event"
-	CmdUpdateTitle      = "update_title"
-	CmdSessionSnapshot  = "session_snapshot"
-	CmdResizeSession    = "resize_session"
+	CmdUpdateTitle     = "update_title"
+	CmdSessionSnapshot = "session_snapshot"
+	CmdResizeSession   = "resize_session"
 	CmdListWorktrees   = "list_worktrees"
 	CmdAddWorktree     = "add_worktree"
 	CmdRemoveWorktree  = "remove_worktree"
@@ -47,8 +47,10 @@ type NewSessionParams struct {
 	WorktreeID string `json:"worktree_id"` // may be empty
 	Tool       string `json:"tool"`        // "claude" | "codex" | ""
 	CWD        string `json:"cwd"`
-	Rows       uint16 `json:"rows"` // 0 = use default
-	Cols       uint16 `json:"cols"` // 0 = use default
+	// CLISessionID requests resuming a tool-native session (currently Claude).
+	CLISessionID string `json:"cli_session_id,omitempty"`
+	Rows         uint16 `json:"rows"` // 0 = use default
+	Cols         uint16 `json:"cols"` // 0 = use default
 }
 
 type ResizeSessionParams struct {
