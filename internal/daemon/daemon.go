@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 
 	"github.com/sharathk-dev/canopy/internal/hooks"
 	"github.com/sharathk-dev/canopy/internal/protocol"
@@ -40,6 +41,8 @@ func New(db *store.Store, sockPath string) *Daemon {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	d.reconcileDeadSessions()
+
 	os.Remove(d.sockPath)
 	ln, err := net.Listen("unix", d.sockPath)
 	if err != nil {
@@ -282,4 +285,36 @@ func (d *Daemon) sendOK(conn net.Conn, data any) {
 func (d *Daemon) sendErr(conn net.Conn, msg string) {
 	resp, _ := json.Marshal(protocol.Response{OK: false, Error: msg})
 	_ = protocol.WriteFrame(conn, protocol.FrameJSON, resp)
+}
+
+// reconcileDeadSessions marks any "running" session whose PID is no longer
+// alive as terminated. This cleans up stale DB state after an unclean shutdown
+// (e.g. when the embedded daemon was killed along with the TUI process).
+func (d *Daemon) reconcileDeadSessions() {
+	sessions, err := d.db.ListActiveSessions()
+	if err != nil {
+		return
+	}
+	for _, sess := range sessions {
+		if sess.State != protocol.StateRunning && sess.State != protocol.StateNeedsInput {
+			continue
+		}
+		if sess.PID <= 0 {
+			continue
+		}
+		proc, err := os.FindProcess(sess.PID)
+		if err != nil {
+			// Process doesn't exist (OS-level).
+			sess.State = protocol.StateTerminated
+			sess.Archived = true
+			_ = d.db.UpdateSession(sess)
+			continue
+		}
+		// Signal 0 checks liveness without disturbing the process.
+		if err := proc.Signal(syscall.Signal(0)); err != nil {
+			sess.State = protocol.StateTerminated
+			sess.Archived = true
+			_ = d.db.UpdateSession(sess)
+		}
+	}
 }
