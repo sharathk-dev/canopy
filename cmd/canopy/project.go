@@ -57,13 +57,13 @@ func runProjectAdd(_ *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	// Idempotent: skip if already registered.
-	projects, _ := db.ListProjects()
-	for _, p := range projects {
-		if p.RepoPath == root {
-			fmt.Printf("already registered: %s (%s)\n", p.Name, p.RepoPath)
-			return nil
-		}
+	// Re-registering a previously removed project restores its original
+	// identity, worktrees, and sessions.
+	if existing, err := db.GetProjectByRepoPath(root); err == nil {
+		_ = db.RestoreProject(existing.ID)
+		seedWorktrees(db, root)
+		fmt.Printf("project restored: %s (%s)\n", existing.Name, existing.RepoPath)
+		return nil
 	}
 
 	proj := protocol.Project{
@@ -111,8 +111,12 @@ func seedWorktrees(db *store.Store, repoPath string) {
 		return
 	}
 	for _, wt := range wts {
+		stored, err := db.GetWorktreeByPath(wt.Path)
+		if err != nil {
+			stored.ID = protocol.NewID()
+		}
 		_ = db.UpsertWorktree(protocol.Worktree{
-			ID:       protocol.NewID(),
+			ID:       stored.ID,
 			RepoPath: repoPath,
 			Path:     wt.Path,
 			Branch:   wt.Branch,

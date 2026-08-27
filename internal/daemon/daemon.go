@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/sharathk-dev/canopy/internal/git"
 	"github.com/sharathk-dev/canopy/internal/hooks"
 	"github.com/sharathk-dev/canopy/internal/protocol"
 	"github.com/sharathk-dev/canopy/internal/store"
@@ -42,6 +43,7 @@ func New(db *store.Store, sockPath string) *Daemon {
 }
 
 func (d *Daemon) Run(ctx context.Context) error {
+	d.reconcileWorktrees()
 	// Recreate persisted sessions before accepting clients. This gives Canopy
 	// browser-like restore semantics when the daemon or TUI is relaunched.
 	d.restoreSessions()
@@ -72,6 +74,44 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 }
 
+// reconcileWorktrees makes the database follow Git's authoritative worktree
+// list without deleting historical rows. Missing worktrees are hidden by the
+// store and become visible again if their path returns.
+func (d *Daemon) reconcileWorktrees() {
+	projects, err := d.db.ListProjects()
+	if err != nil {
+		return
+	}
+	for _, project := range projects {
+		gitWorktrees, err := git.ListWorktrees(project.RepoPath)
+		if err != nil {
+			continue
+		}
+		existing, _ := d.db.ListWorktreesByRepo(project.RepoPath)
+		seen := make(map[string]bool)
+		for _, info := range gitWorktrees {
+			if info.IsBare {
+				continue
+			}
+			seen[info.Path] = true
+			wt, lookupErr := d.db.GetWorktreeByPath(info.Path)
+			if lookupErr != nil {
+				wt.ID = protocol.NewID()
+			}
+			wt.RepoPath = project.RepoPath
+			wt.Path = info.Path
+			wt.Branch = info.Branch
+			wt.IsMain = info.IsMain
+			_ = d.db.UpsertWorktree(wt)
+		}
+		for _, wt := range existing {
+			if !seen[wt.Path] {
+				_ = d.db.MarkWorktreeMissing(wt.ID, true)
+			}
+		}
+	}
+}
+
 func (d *Daemon) restoreSessions() {
 	sessions, err := d.db.ListActiveSessions()
 	if err != nil {
@@ -79,6 +119,12 @@ func (d *Daemon) restoreSessions() {
 	}
 
 	for _, sess := range sessions {
+		missingWorktree, worktreeErr := d.db.IsWorktreeMissing(sess.WorktreeID)
+		if _, err := os.Stat(sess.CWD); err != nil || (worktreeErr == nil && missingWorktree) {
+			sess.State = protocol.StateDisconnected
+			_ = d.db.UpdateSession(sess)
+			continue
+		}
 		// A previous daemon may have left the child process alive. Stop it before
 		// replacing it, otherwise restoring would create duplicate Claude tabs.
 		if sess.PID > 0 {

@@ -18,7 +18,8 @@ const schema = `
 CREATE TABLE IF NOT EXISTS projects (
 	id        TEXT PRIMARY KEY,
 	repo_path TEXT NOT NULL,
-	name      TEXT NOT NULL
+	name      TEXT NOT NULL,
+	archived  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS worktrees (
@@ -59,6 +60,8 @@ func Open(path string) (*Store, error) {
 	}
 	// Migration: add pid column to existing databases.
 	_, _ = db.Exec(`ALTER TABLE sessions ADD COLUMN pid INTEGER NOT NULL DEFAULT 0`)
+	// Migration: project removal is a reversible soft-unregister.
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`)
 	return &Store{db: db}, nil
 }
 
@@ -69,22 +72,22 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) UpsertProject(p protocol.Project) error {
 	_, err := s.db.Exec(
-		`INSERT INTO projects(id,repo_path,name) VALUES(?,?,?)
-		 ON CONFLICT(id) DO UPDATE SET repo_path=excluded.repo_path, name=excluded.name`,
+		`INSERT INTO projects(id,repo_path,name,archived) VALUES(?,?,?,0)
+		 ON CONFLICT(id) DO UPDATE SET repo_path=excluded.repo_path, name=excluded.name, archived=0`,
 		p.ID, p.RepoPath, p.Name,
 	)
 	return err
 }
 
 func (s *Store) GetProject(id string) (protocol.Project, error) {
-	row := s.db.QueryRow(`SELECT id,repo_path,name FROM projects WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id,repo_path,name FROM projects WHERE id=? AND archived=0`, id)
 	var p protocol.Project
 	err := row.Scan(&p.ID, &p.RepoPath, &p.Name)
 	return p, err
 }
 
 func (s *Store) ListProjects() ([]protocol.Project, error) {
-	rows, err := s.db.Query(`SELECT id,repo_path,name FROM projects ORDER BY name`)
+	rows, err := s.db.Query(`SELECT id,repo_path,name FROM projects WHERE archived=0 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +101,26 @@ func (s *Store) ListProjects() ([]protocol.Project, error) {
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// GetProjectByRepoPath finds a project even when it has been soft-unregistered.
+func (s *Store) GetProjectByRepoPath(repoPath string) (protocol.Project, error) {
+	row := s.db.QueryRow(`SELECT id,repo_path,name FROM projects WHERE repo_path=?`, repoPath)
+	var p protocol.Project
+	err := row.Scan(&p.ID, &p.RepoPath, &p.Name)
+	return p, err
+}
+
+func (s *Store) RestoreProject(id string) error {
+	_, err := s.db.Exec(`UPDATE projects SET archived=0 WHERE id=?`, id)
+	return err
+}
+
+// DeleteProject unregisters a project from Canopy without touching its files
+// on disk. Its worktrees and sessions remain available if re-registered.
+func (s *Store) DeleteProject(id string) error {
+	_, err := s.db.Exec(`UPDATE projects SET archived=1 WHERE id=?`, id)
+	return err
 }
 
 // --- Worktrees ---
@@ -129,7 +152,7 @@ func (s *Store) GetWorktree(id string) (protocol.Worktree, error) {
 
 func (s *Store) ListWorktreesByRepo(repoPath string) ([]protocol.Worktree, error) {
 	rows, err := s.db.Query(
-		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE repo_path=? ORDER BY path`,
+		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE repo_path=? AND missing=0 ORDER BY path`,
 		repoPath,
 	)
 	if err != nil {
@@ -154,6 +177,12 @@ func (s *Store) MarkWorktreeMissing(id string, missing bool) error {
 	return err
 }
 
+func (s *Store) IsWorktreeMissing(id string) (bool, error) {
+	var missing int
+	err := s.db.QueryRow(`SELECT missing FROM worktrees WHERE id=?`, id).Scan(&missing)
+	return missing != 0, err
+}
+
 func (s *Store) DeleteWorktree(id string) error {
 	_, err := s.db.Exec(`DELETE FROM worktrees WHERE id=?`, id)
 	return err
@@ -172,7 +201,7 @@ func (s *Store) GetWorktreeByPath(path string) (protocol.Worktree, error) {
 // GetWorktreeByPathPrefix finds the worktree whose path is the longest prefix of dir.
 func (s *Store) GetWorktreeByPathPrefix(dir string) (protocol.Worktree, error) {
 	rows, err := s.db.Query(
-		`SELECT id,repo_path,path,branch,is_main FROM worktrees ORDER BY length(path) DESC`)
+		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE missing=0 ORDER BY length(path) DESC`)
 	if err != nil {
 		return protocol.Worktree{}, err
 	}

@@ -46,17 +46,20 @@ type Model struct {
 	ready         bool
 	rightFocused  bool // true = j/k scroll right pane, false = navigate tree
 
-	jumpToSession   bool // set after n key; auto-navigate to first new session
-	sessionLocked   bool // when true, keys are forwarded to the active PTY
-	lockedSessionID string
-	confirmKillID   string
-	titleEditingID  string
-	titleInput      string
-	newSessionCWD   string
-	projectAdding   bool
-	projectPath     string
-	daemonDown      bool
-	err             string
+	jumpToSession      bool // set after n key; auto-navigate to first new session
+	sessionLocked      bool // when true, keys are forwarded to the active PTY
+	lockedSessionID    string
+	confirmKillID      string
+	titleEditingID     string
+	titleInput         string
+	newSessionCWD      string
+	projectAdding      bool
+	projectPath        string
+	projectDeleteID    string
+	projectDeleteName  string
+	projectDeleteInput string
+	daemonDown         bool
+	err                string
 }
 
 // New creates a new TUI model.
@@ -184,6 +187,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.projectDeleteID != "" {
+		switch msg.String() {
+		case "enter":
+			if m.projectDeleteInput == "DELETE" {
+				id := m.projectDeleteID
+				m.projectDeleteID = ""
+				m.projectDeleteName = ""
+				m.projectDeleteInput = ""
+				cmds = append(cmds, deleteProjectCmd(m.dbPath, id))
+			}
+		case "esc":
+			m.projectDeleteID = ""
+			m.projectDeleteName = ""
+			m.projectDeleteInput = ""
+		case "backspace", "ctrl+h":
+			if len(m.projectDeleteInput) > 0 {
+				runes := []rune(m.projectDeleteInput)
+				m.projectDeleteInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				m.projectDeleteInput += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.projectAdding {
 		switch msg.String() {
 		case "enter":
@@ -331,7 +361,12 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		}
 
 	case "x":
-		if sess := selectedSession(m.items, m.cursor); sess != nil {
+		if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindProject {
+			project := m.items[m.cursor].project
+			m.projectDeleteID = project.ID
+			m.projectDeleteName = project.Name
+			m.projectDeleteInput = ""
+		} else if sess := selectedSession(m.items, m.cursor); sess != nil {
 			m.confirmKillID = sess.ID
 		}
 
@@ -445,7 +480,15 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	var hints []string
-	if m.projectAdding {
+	if m.projectDeleteID != "" {
+		left := "type DELETE to remove " + m.projectDeleteName + ": " + m.projectDeleteInput
+		right := styleFooterKey.Render("enter") + " confirm   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.projectAdding {
 		left := "project path: " + m.projectPath
 		right := styleFooterKey.Render("enter") + " add   " + styleFooterKey.Render("esc") + " cancel"
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
@@ -716,6 +759,20 @@ func updateTitleCmd(sockPath, sessionID, title string) tea.Cmd {
 			return errMsg("save title: " + err.Error())
 		}
 		return nil
+	}
+}
+
+func deleteProjectCmd(dbPath, projectID string) tea.Cmd {
+	return func() tea.Msg {
+		db, err := store.Open(dbPath)
+		if err != nil {
+			return errMsg("open store: " + err.Error())
+		}
+		defer db.Close()
+		if err := db.DeleteProject(projectID); err != nil {
+			return errMsg("delete project: " + err.Error())
+		}
+		return fetchDataCmd(dbPath)()
 	}
 }
 

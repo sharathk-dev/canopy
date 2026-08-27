@@ -27,6 +27,9 @@ daemon or TUI is restarted.
 - On daemon startup, every non-archived session is recreated. Claude sessions with a
   saved native ID are started with `claude --resume <id>`; sessions without one start
   fresh.
+- On daemon startup, registered projects are reconciled against Git's current worktree
+  list. Missing worktrees are retained as historical rows but hidden from the active
+  tree; reappearing paths reuse their original IDs.
 - Canopy session IDs remain stable across restoration, so the TUI and database continue
   referring to the same session row.
 
@@ -157,5 +160,5 @@ docs/plan/           Design notes
   starts a fresh process.
 - A stale or deleted Claude native session ID should eventually fall back automatically
   to a fresh session instead of marking restoration as failed.
-- Worktree reconciliation and project/worktree status rollups are planned but are not
-  currently part of daemon startup.
+- Project removal is a reversible soft-unregister. It hides the project without deleting
+  its repository, worktrees, or sessions; registering the same repository restores it.
