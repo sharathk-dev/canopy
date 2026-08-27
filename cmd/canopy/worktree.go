@@ -23,6 +23,7 @@ var (
 	flagWorktreePath  string
 	flagWorktreeForce bool
 	flagWorktreeRepo  string
+	flagWorktreeBase  string
 )
 
 var worktreeListCmd = &cobra.Command{
@@ -33,7 +34,7 @@ var worktreeListCmd = &cobra.Command{
 
 var worktreeAddCmd = &cobra.Command{
 	Use:   "add <branch>",
-	Short: "Add a new worktree for a branch",
+	Short: "Create a new branch and worktree",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runWorktreeAdd,
 }
@@ -49,6 +50,7 @@ func init() {
 	worktreeListCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
 	worktreeAddCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
 	worktreeAddCmd.Flags().StringVar(&flagWorktreePath, "path", "", "Worktree path (default: sibling dir named after branch)")
+	worktreeAddCmd.Flags().StringVar(&flagWorktreeBase, "base", "", "Base branch (default: detected repository default)")
 	worktreeRemoveCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
 	worktreeRemoveCmd.Flags().BoolVar(&flagWorktreeForce, "force", false, "Remove even with uncommitted changes")
 
@@ -118,7 +120,15 @@ func runWorktreeAdd(_ *cobra.Command, args []string) error {
 		path = filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+safeBranch)
 	}
 
-	if err := git.AddWorktree(root, path, branch); err != nil {
+	base := flagWorktreeBase
+	if base == "" {
+		base, err = git.DefaultBranch(root)
+		if err != nil {
+			return fmt.Errorf("determine base branch: %w", err)
+		}
+	}
+
+	if err := git.AddWorktree(root, path, branch, base); err != nil {
 		return fmt.Errorf("git add worktree: %w", err)
 	}
 
@@ -134,11 +144,14 @@ func runWorktreeAdd(_ *cobra.Command, args []string) error {
 		Path:     path,
 		Branch:   branch,
 	}
+	if project, err := db.GetProjectByRepoPath(root); err == nil {
+		wt.ProjectID = project.ID
+	}
 	if err := db.UpsertWorktree(wt); err != nil {
 		return fmt.Errorf("save worktree: %w", err)
 	}
 
-	fmt.Printf("worktree created: %s\n  branch: %s\n  path:   %s\n", wt.ID, wt.Branch, wt.Path)
+	fmt.Printf("worktree created: %s\n  branch: %s\n  base:   %s\n  path:   %s\n", wt.ID, wt.Branch, base, wt.Path)
 	return nil
 }
 

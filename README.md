@@ -39,7 +39,8 @@ Inside the TUI:
 | `n` | Name and start a Claude session in the selected worktree; blank uses a random `session_` name |
 | `Enter` | Expand a project/worktree or attach to a session |
 | `Tab` | Switch between the project tree and output panel |
-| `x` | Request session termination; press `y`/Enter to confirm |
+| `w` | Create a new branch and worktree |
+| `x` | Remove the selected project/worktree or terminate a session |
 | `Ctrl+Q` | Leave an attached session and return to the tree |
 | `q` | Quit the TUI |
 
@@ -51,7 +52,7 @@ Quitting the TUI does not intentionally terminate sessions. Relaunching `canopy`
 canopy project add [path]
 canopy project list
 canopy worktree list
-canopy worktree add <branch>
+canopy worktree add <branch> [--base branch] [--path path]
 canopy worktree remove <path>
 canopy session new [--tool claude] [--cwd path]
 canopy session list

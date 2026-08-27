@@ -113,7 +113,10 @@ Hook payloads also provide Claude's native `session_id`, which Canopy stores as
 - Finished and terminated sessions use muted status colors.
 - The animation is driven by one shared 250ms timer, so all working rows update together.
 - Selected rows retain the blue selection background while preserving the colored glyph.
-- Pressing `x` asks for confirmation before killing a session.
+- Pressing `x` asks for confirmation before killing a session or removing a project/worktree.
+- Pressing `w` on a project or worktree prompts for a new branch and optional path. The
+  worktree is created from the repository's detected default branch, which can be overridden
+  with `--base` on the CLI. The branch name is the primary worktree label in the tree.
 
 ## Commands
 
@@ -122,7 +125,7 @@ canopy
 canopy project add [path]
 canopy project list
 canopy worktree list
-canopy worktree add <branch>
+canopy worktree add <branch> [--base branch] [--path path]
 canopy worktree remove <path>
 canopy session new [--tool claude] [--cwd path]
 canopy session list

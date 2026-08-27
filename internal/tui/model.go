@@ -46,21 +46,30 @@ type Model struct {
 	ready         bool
 	rightFocused  bool // true = j/k scroll right pane, false = navigate tree
 
-	jumpToSession      bool // set after n key; auto-navigate to first new session
-	sessionLocked      bool // when true, keys are forwarded to the active PTY
-	lockedSessionID    string
-	confirmKillID      string
-	titleEditingID     string
-	titleInput         string
-	newSessionCWD      string
-	projectAdding      bool
-	projectPath        string
-	projectDeleteID    string
-	projectDeleteName  string
-	projectDeleteInput string
-	showHelp           bool
-	daemonDown         bool
-	err                string
+	jumpToSession       bool // set after n key; auto-navigate to first new session
+	sessionLocked       bool // when true, keys are forwarded to the active PTY
+	lockedSessionID     string
+	confirmKillID       string
+	titleEditingID      string
+	titleInput          string
+	newSessionCWD       string
+	projectAdding       bool
+	projectPath         string
+	worktreeAdding      bool
+	worktreeRepo        string
+	worktreeBranch      string
+	worktreePath        string
+	worktreePathMode    bool
+	projectDeleteID     string
+	projectDeleteName   string
+	projectDeleteInput  string
+	worktreeDeleteID    string
+	worktreeDeleteRepo  string
+	worktreeDeletePath  string
+	worktreeDeleteInput string
+	showHelp            bool
+	daemonDown          bool
+	err                 string
 }
 
 // New creates a new TUI model.
@@ -223,6 +232,39 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
+	if m.worktreeDeleteID != "" {
+		switch msg.String() {
+		case "enter":
+			if m.worktreeDeleteInput == "DELETE" {
+				repo := m.worktreeDeleteRepo
+				path := m.worktreeDeletePath
+				m.worktreeDeleteID = ""
+				m.worktreeDeleteRepo = ""
+				m.worktreeDeletePath = ""
+				m.worktreeDeleteInput = ""
+				return m, tea.ExecProcess(
+					exec.Command(executablePath(), "worktree", "remove", path, "--repo", repo),
+					func(error) tea.Msg { return fetchDataCmd(m.dbPath)() },
+				)
+			}
+		case "esc":
+			m.worktreeDeleteID = ""
+			m.worktreeDeleteRepo = ""
+			m.worktreeDeletePath = ""
+			m.worktreeDeleteInput = ""
+		case "backspace", "ctrl+h":
+			if len(m.worktreeDeleteInput) > 0 {
+				runes := []rune(m.worktreeDeleteInput)
+				m.worktreeDeleteInput = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				m.worktreeDeleteInput += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.projectAdding {
 		switch msg.String() {
 		case "enter":
@@ -246,6 +288,59 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		default:
 			if len(msg.Runes) > 0 {
 				m.projectPath += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	if m.worktreeAdding {
+		switch msg.String() {
+		case "enter":
+			if !m.worktreePathMode {
+				if strings.TrimSpace(m.worktreeBranch) != "" {
+					m.worktreePathMode = true
+				}
+				return m, tea.Batch(cmds...)
+			}
+			branch := strings.TrimSpace(m.worktreeBranch)
+			if branch == "" {
+				return m, tea.Batch(cmds...)
+			}
+			repo := m.worktreeRepo
+			path := strings.TrimSpace(m.worktreePath)
+			m.worktreeAdding = false
+			m.worktreeRepo = ""
+			m.worktreeBranch = ""
+			m.worktreePath = ""
+			m.worktreePathMode = false
+			args := []string{"worktree", "add", branch, "--repo", repo}
+			if path != "" {
+				args = append(args, "--path", path)
+			}
+			return m, tea.ExecProcess(exec.Command(executablePath(), args...),
+				func(error) tea.Msg { return fetchDataCmd(m.dbPath)() })
+		case "esc":
+			m.worktreeAdding = false
+			m.worktreeRepo = ""
+			m.worktreeBranch = ""
+			m.worktreePath = ""
+			m.worktreePathMode = false
+		case "backspace", "ctrl+h":
+			field := &m.worktreeBranch
+			if m.worktreePathMode {
+				field = &m.worktreePath
+			}
+			if len(*field) > 0 {
+				runes := []rune(*field)
+				*field = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				if m.worktreePathMode {
+					m.worktreePath += string(msg.Runes)
+				} else {
+					m.worktreeBranch += string(msg.Runes)
+				}
 			}
 		}
 		return m, tea.Batch(cmds...)
@@ -366,6 +461,15 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		m.projectAdding = true
 		m.projectPath = ""
 
+	case "w":
+		if repo := m.selectedRepoPath(); repo != "" {
+			m.worktreeAdding = true
+			m.worktreeRepo = repo
+			m.worktreeBranch = ""
+			m.worktreePath = ""
+			m.worktreePathMode = false
+		}
+
 	case "n":
 		if cwd := m.selectedCWD(); cwd != "" {
 			m.newSessionCWD = cwd
@@ -378,6 +482,12 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.projectDeleteID = project.ID
 			m.projectDeleteName = project.Name
 			m.projectDeleteInput = ""
+		} else if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindWorktree {
+			item := m.items[m.cursor]
+			m.worktreeDeleteID = item.worktree.ID
+			m.worktreeDeleteRepo = item.project.RepoPath
+			m.worktreeDeletePath = item.worktree.Path
+			m.worktreeDeleteInput = ""
 		} else if sess := selectedSession(m.items, m.cursor); sess != nil {
 			m.confirmKillID = sess.ID
 		}
@@ -503,6 +613,14 @@ func (m Model) renderFooter() string {
 			gap = 1
 		}
 		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.worktreeDeleteID != "" {
+		left := "type DELETE to remove worktree: " + m.worktreeDeleteInput
+		right := styleFooterKey.Render("enter") + " confirm   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 	} else if m.projectAdding {
 		left := "project path: " + m.projectPath
 		right := styleFooterKey.Render("enter") + " add   " + styleFooterKey.Render("esc") + " cancel"
@@ -511,8 +629,19 @@ func (m Model) renderFooter() string {
 			gap = 1
 		}
 		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.worktreeAdding {
+		left := "branch: " + m.worktreeBranch
+		if m.worktreePathMode {
+			left = "path (optional): " + m.worktreePath
+		}
+		right := styleFooterKey.Render("enter") + " next/create   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 	} else if m.newSessionCWD != "" {
-		left := "new title: " + m.titleInput
+		left := "new title (optional): " + m.titleInput
 		right := styleFooterKey.Render("enter") + " start   " + styleFooterKey.Render("esc") + " cancel"
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 		if gap < 1 {
@@ -664,6 +793,23 @@ func (m Model) renderEmptyState(bodyH int) string {
 }
 
 func (m Model) renderDetail(width, height int) string {
+	if m.cursor >= 0 && m.cursor < len(m.items) {
+		item := m.items[m.cursor]
+		if item.worktree != nil {
+			lines := []string{
+				"",
+				lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(item.worktree.Branch),
+				"",
+				styleOutputEmpty.Render("branch    " + item.worktree.Branch),
+				styleOutputEmpty.Render("path      " + item.worktree.Path),
+				"",
+				styleOutputEmpty.Render("press n to start a session"),
+			}
+			_ = height
+			return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+		}
+	}
+
 	sess := selectedSession(m.items, m.cursor)
 	if sess == nil {
 		return styleOutputEmpty.Width(width).Render(
@@ -747,6 +893,16 @@ func (m *Model) selectedCWD() string {
 	}
 	if item.session != nil {
 		return item.session.CWD
+	}
+	return ""
+}
+
+func (m *Model) selectedRepoPath() string {
+	if m.cursor < 0 || m.cursor >= len(m.items) {
+		return ""
+	}
+	if project := m.items[m.cursor].project; project != nil {
+		return project.RepoPath
 	}
 	return ""
 }

@@ -33,11 +33,32 @@ func ListWorktrees(repoRoot string) ([]WorktreeInfo, error) {
 	return parsePorcelain(out), nil
 }
 
-// AddWorktree creates a new worktree at path checked out to branch.
-// If branch does not yet exist, pass "-b branch" semantics by using an empty
-// newBranch — callers can shell-construct the branch before calling this.
-func AddWorktree(repoRoot, path, branch string) error {
-	_, err := run(repoRoot, "worktree", "add", path, branch)
+// DefaultBranch returns the repository's preferred base branch without
+// contacting the remote. Clones normally record origin/HEAD locally; for
+// repositories without that symbolic ref, use common local branch names and
+// finally the currently checked-out branch.
+func DefaultBranch(repoRoot string) (string, error) {
+	if out, err := run(repoRoot, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		return strings.TrimPrefix(strings.TrimSpace(out), "origin/"), nil
+	}
+	for _, branch := range []string{"main", "master", "development"} {
+		if _, err := run(repoRoot, "show-ref", "--verify", "--quiet", "refs/heads/"+branch); err == nil {
+			return branch, nil
+		}
+	}
+	if out, err := run(repoRoot, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
+		return strings.TrimSpace(out), nil
+	}
+	return "", fmt.Errorf("could not determine default branch")
+}
+
+// AddWorktree creates a new branch and worktree at path, based on base.
+func AddWorktree(repoRoot, path, branch, base string) error {
+	args := []string{"worktree", "add", "-b", branch, path}
+	if base != "" {
+		args = append(args, base)
+	}
+	_, err := run(repoRoot, args...)
 	if err != nil {
 		return fmt.Errorf("git worktree add: %w", err)
 	}
