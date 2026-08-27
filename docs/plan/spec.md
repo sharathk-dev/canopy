@@ -54,7 +54,6 @@ type Session struct {
     CWD         string // worktree.Path, or a module subpath chosen at creation time
     CLISessionID string // native resume id, e.g. claude's session uuid
     Title       string // auto-generated after first prompt, user-renameable
-    TitleLocked bool   // true once user manually renames — agent won't overwrite
     State       string // fresh | running | finished | needs_input | terminated | disconnected
     Archived    bool
     TmuxOrPTYRef string // socket/pty handle managed by the daemon
@@ -125,7 +124,7 @@ internal/protocol/        # shared types/messages between daemon and client
 3. **Status tracking via CLI hooks** — start with Claude Code (richest hook support),
    wire up the loopback HTTP endpoint and hook config injection.
 4. **Self-titling** — session auto-renames itself from its first prompt via a one-shot
-   hook-injected instruction; respects `TitleLocked`.
+   hook-injected instruction; preserves user-defined titles.
 5. **Multi-CLI support** — extend to Codex/Cursor, handling each one's quirks (e.g.
    Cursor's lack of context-injecting hooks needs the project-rule fallback from SPEC
    §4.2).
