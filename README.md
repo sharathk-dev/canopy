@@ -86,7 +86,8 @@ Claude hook configuration is written to `.claude/settings.local.json` in each se
 Requires Go. The repository includes a conventional `Makefile`:
 
 ```bash
-make test              # run tests
+make fmt               # format Go files
+make check             # verify formatting and run tests
 make build             # create ./canopy
 make install           # install to ~/.local/bin/canopy
 make clean             # remove ./canopy

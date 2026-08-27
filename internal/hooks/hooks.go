@@ -15,4 +15,4 @@ type Injector interface {
 type NoopInjector struct{}
 
 func (NoopInjector) Inject(_, _, _ string) error { return nil }
-func (NoopInjector) Remove(_ string) error        { return nil }
+func (NoopInjector) Remove(_ string) error       { return nil }

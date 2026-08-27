@@ -53,6 +53,8 @@ type Model struct {
 	titleEditingID  string
 	titleInput      string
 	newSessionCWD   string
+	projectAdding   bool
+	projectPath     string
 	daemonDown      bool
 	err             string
 }
@@ -182,6 +184,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.projectAdding {
+		switch msg.String() {
+		case "enter":
+			path := strings.TrimSpace(m.projectPath)
+			if path != "" {
+				m.projectAdding = false
+				m.projectPath = ""
+				return m, tea.ExecProcess(
+					exec.Command(executablePath(), "project", "add", path),
+					func(error) tea.Msg { return fetchDataCmd(m.dbPath)() },
+				)
+			}
+		case "esc":
+			m.projectAdding = false
+			m.projectPath = ""
+		case "backspace", "ctrl+h":
+			if len(m.projectPath) > 0 {
+				runes := []rune(m.projectPath)
+				m.projectPath = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				m.projectPath += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.newSessionCWD != "" {
 		switch msg.String() {
 		case "enter":
@@ -291,11 +321,8 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		m.toggleOrAttach(&cmds)
 
 	case "a":
-		cwd, _ := os.Getwd()
-		return m, tea.ExecProcess(
-			exec.Command(executablePath(), "project", "add", cwd),
-			func(err error) tea.Msg { return fetchDataCmd(m.dbPath)() },
-		)
+		m.projectAdding = true
+		m.projectPath = ""
 
 	case "n":
 		if cwd := m.selectedCWD(); cwd != "" {
@@ -418,7 +445,15 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderFooter() string {
 	var hints []string
-	if m.newSessionCWD != "" {
+	if m.projectAdding {
+		left := "project path: " + m.projectPath
+		right := styleFooterKey.Render("enter") + " add   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.newSessionCWD != "" {
 		left := "new title: " + m.titleInput
 		right := styleFooterKey.Render("enter") + " start   " + styleFooterKey.Render("esc") + " cancel"
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
