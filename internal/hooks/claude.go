@@ -38,10 +38,10 @@ func (ci ClaudeInjector) Inject(sessionID, cwd, hookToken string) error {
 
 	for _, event := range []string{"PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit"} {
 		cmd := fmt.Sprintf(
-			"canopy _hook --session=%s --token=%s --event=%s",
-			sessionID, hookToken, event,
+			"canopy _hook --session=$CANOPY_SESSION_ID --event=%s",
+			event,
 		)
-		hooks[event] = mergeHookEntry(hooks[event], sessionID, cmd)
+		hooks[event] = mergeHookEntry(hooks[event], cmd)
 	}
 
 	settings["hooks"] = hooks
@@ -117,15 +117,15 @@ func writeSettings(path string, settings map[string]any) error {
 // Claude settings hook entry shape:
 // [ { "hooks": [ { "type": "command", "command": "..." } ] }, ... ]
 //
-// mergeHookEntry ensures exactly one canopy entry for sessionID exists in the list,
-// replacing any stale entry for the same session.
-func mergeHookEntry(existing any, sessionID, cmd string) any {
+// mergeHookEntry ensures exactly one shared canopy entry exists in the list.
+// The session identity is supplied by the Claude process environment.
+func mergeHookEntry(existing any, cmd string) any {
 	entries := toSlice(existing)
 
-	// Remove stale canopy entry for this session (identified by session id in the command).
+	// Remove old/shared canopy entries before adding the current one.
 	var kept []any
 	for _, e := range entries {
-		if isCanopyEntry(e, sessionID) {
+		if isCanopyEntry(e) {
 			continue
 		}
 		kept = append(kept, e)
@@ -145,7 +145,7 @@ func removeHookEntry(existing any, sessionID string) (any, bool) {
 	var kept []any
 	changed := false
 	for _, e := range entries {
-		if isCanopyEntry(e, sessionID) {
+		if isCanopyEntryForSession(e, sessionID) {
 			changed = true
 			continue
 		}
@@ -154,7 +154,7 @@ func removeHookEntry(existing any, sessionID string) (any, bool) {
 	return kept, changed
 }
 
-func isCanopyEntry(entry any, sessionID string) bool {
+func isCanopyEntry(entry any) bool {
 	m, ok := entry.(map[string]any)
 	if !ok {
 		return false
@@ -169,7 +169,28 @@ func isCanopyEntry(entry any, sessionID string) bool {
 			continue
 		}
 		cmd, _ := hm["command"].(string)
-		if strings.HasPrefix(cmd, hookMarker) && strings.Contains(cmd, "--session="+sessionID) {
+		if strings.HasPrefix(cmd, hookMarker) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCanopyEntryForSession identifies legacy per-session entries. Shared
+// entries intentionally remain when one session exits because other sessions
+// in the same worktree still use them.
+func isCanopyEntryForSession(entry any, sessionID string) bool {
+	if !isCanopyEntry(entry) {
+		return false
+	}
+	m := entry.(map[string]any)
+	for _, h := range m["hooks"].([]any) {
+		hm, ok := h.(map[string]any)
+		if !ok {
+			continue
+		}
+		cmd, _ := hm["command"].(string)
+		if strings.Contains(cmd, "--session="+sessionID) {
 			return true
 		}
 	}

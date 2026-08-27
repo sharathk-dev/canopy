@@ -125,7 +125,6 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 			tool = "shell"
 		}
 		dot := stateDot(item.session.State)
-		label := stateLabel(item.session.State)
 		name := item.session.Title
 		if name == "" {
 			name = tool
@@ -133,14 +132,11 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 		// Use the session title when available, while keeping the state visible.
 		if selected {
 			// For selected, rebuild without style so we can apply bg
-			content = fmt.Sprintf("    %s  %s", name, item.session.State)
-			_ = dot
-			_ = label
+			content = fmt.Sprintf("    %s  %s", selectedStateDot(item.session.State), name)
 		} else {
-			content = fmt.Sprintf("    %s · %s %s",
-				lipgloss.NewStyle().Foreground(colorText).Render(name),
-				label,
+			content = fmt.Sprintf("    %s  %s",
 				dot,
+				lipgloss.NewStyle().Foreground(colorText).Render(name),
 			)
 		}
 	}

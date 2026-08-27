@@ -72,6 +72,7 @@ func New(sockPath, dbPath string) Model {
 
 type tickMsg time.Time
 type fastTickMsg time.Time
+type animationTickMsg struct{}
 type dataMsg daemonData
 type snapshotMsg string
 type sessionCreatedMsg string // session ID
@@ -81,7 +82,7 @@ type daemonDownMsg struct{}
 // --- Init ---
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchDataCmd(m.dbPath), tickCmd())
+	return tea.Batch(fetchDataCmd(m.dbPath), tickCmd(), animationTickCmd())
 }
 
 // --- Update ---
@@ -116,6 +117,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.sessionLocked {
 			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID), fastTickCmd())
 		}
+
+	case animationTickMsg:
+		animationFrame++
+		cmds = append(cmds, animationTickCmd())
 
 	case dataMsg:
 		m.err = ""
@@ -629,6 +634,12 @@ func tickCmd() tea.Cmd {
 func fastTickCmd() tea.Cmd {
 	return tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
 		return fastTickMsg(t)
+	})
+}
+
+func animationTickCmd() tea.Cmd {
+	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
+		return animationTickMsg{}
 	})
 }
 

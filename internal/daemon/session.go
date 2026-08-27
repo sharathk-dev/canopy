@@ -44,6 +44,7 @@ func restoreSession(sess protocol.Session, db *store.Store, injector hooks.Injec
 
 func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector, existing *protocol.Session) (*sessionProc, error) {
 	hookToken := protocol.NewID()
+	procID := protocol.NewID()
 
 	args := []string{}
 	if params.Tool == "claude" && params.CLISessionID != "" {
@@ -51,6 +52,9 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 	}
 	cmd := exec.Command(params.Tool, args...)
 	cmd.Dir = params.CWD
+	// Hook configuration is shared by all Claude processes in a worktree.
+	// The environment identifies which Canopy session emitted the hook.
+	cmd.Env = append(os.Environ(), "CANOPY_SESSION_ID="+procID)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -66,9 +70,9 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
 
-	procID := protocol.NewID()
 	if existing != nil {
 		procID = existing.ID
+		cmd.Env = append(os.Environ(), "CANOPY_SESSION_ID="+procID)
 	}
 	proc := &sessionProc{
 		id:        procID,
@@ -86,7 +90,7 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 		CWD:          params.CWD,
 		CLISessionID: params.CLISessionID,
 		Title:        params.Title,
-		State:        protocol.StateRunning,
+		State:        protocol.StateFresh,
 		PID:          cmd.Process.Pid,
 		StartedAt:    time.Now(),
 	}
@@ -94,7 +98,9 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 		// Preserve user-visible metadata such as the title.
 		sess = *existing
 		sess.PID = cmd.Process.Pid
-		sess.State = protocol.StateRunning
+		if sess.State == protocol.StateRunning {
+			sess.State = protocol.StateFresh
+		}
 		sess.Archived = false
 	}
 	var dbErr error
