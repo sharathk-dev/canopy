@@ -173,8 +173,8 @@ func runWorktreeRemove(_ *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	if wt, err := db.GetWorktreeByPath(path); err == nil {
-		_ = db.DeleteWorktree(wt.ID)
+	if wt, err := db.GetWorktreeByRepoAndPath(root, path); err == nil {
+		_ = db.MarkWorktreeMissing(wt.ID, true)
 	}
 
 	fmt.Printf("worktree removed: %s\n", path)

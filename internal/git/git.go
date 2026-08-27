@@ -78,14 +78,12 @@ func parsePorcelain(output string) []WorktreeInfo {
 			continue
 		}
 		var info WorktreeInfo
-		first := true
 		for _, line := range strings.Split(stanza, "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "worktree ") {
 				info.Path = strings.TrimPrefix(line, "worktree ")
-				if first {
+				if len(results) == 0 {
 					info.IsMain = true
-					first = false
 				}
 			} else if strings.HasPrefix(line, "branch ") {
 				ref := strings.TrimPrefix(line, "branch ")

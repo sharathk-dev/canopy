@@ -59,6 +59,10 @@ func runDaemonStart(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	if daemonCurrent(exe) {
+		fmt.Println("daemon already running")
+		return nil
+	}
 
 	proc, err := os.StartProcess(exe, []string{exe, "daemon", "_run"},
 		&os.ProcAttr{

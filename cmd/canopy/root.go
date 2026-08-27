@@ -122,13 +122,11 @@ func daemonCurrent(exe string) bool {
 	if err != nil {
 		return true
 	}
-	return fi.ModTime().Unix() == ver.BinaryMtime
+	return fi.ModTime().UnixNano() == ver.BinaryMtime
 }
 
 func init() {
-	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(sessionCmd)
 	rootCmd.AddCommand(worktreeCmd)
-	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(uiCmd)
 }

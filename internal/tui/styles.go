@@ -9,7 +9,6 @@ import (
 var animationFrame uint64
 
 var (
-	colorBg         = lipgloss.Color("#1a1a1a")
 	colorPanel      = lipgloss.Color("#111111")
 	colorBorder     = lipgloss.Color("#333333")
 	colorSelected   = lipgloss.Color("#2563eb") // blue
@@ -19,7 +18,6 @@ var (
 	colorWaiting    = lipgloss.Color("#f87171") // coral red
 	colorFinished   = lipgloss.Color("#64748b") // dim
 	colorTerminated = lipgloss.Color("#ef4444") // red
-	colorGreen      = lipgloss.Color("#22c55e")
 
 	styleHeader = lipgloss.NewStyle().
 			Background(colorPanel).
@@ -29,9 +27,6 @@ var (
 	styleHeaderBreadcrumb = lipgloss.NewStyle().
 				Foreground(colorText).
 				Bold(true)
-
-	styleHeaderDim = lipgloss.NewStyle().
-			Foreground(colorDim)
 
 	styleFooter = lipgloss.NewStyle().
 			Background(colorPanel).
@@ -77,15 +72,10 @@ var (
 	styleDivider = lipgloss.NewStyle().
 			Foreground(colorBorder)
 
-	styleOutput = lipgloss.NewStyle().
-			Foreground(colorText)
-
 	styleOutputEmpty = lipgloss.NewStyle().
 				Foreground(colorDim).
 				PaddingLeft(2).
 				PaddingTop(1)
-
-	styleStatusDot = lipgloss.NewStyle().Foreground(colorGreen)
 )
 
 func stateStyle(state string) lipgloss.Style {

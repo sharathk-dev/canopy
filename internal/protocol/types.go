@@ -11,11 +11,12 @@ type Project struct {
 
 // Worktree is a git worktree under a project.
 type Worktree struct {
-	ID       string
-	RepoPath string
-	Path     string
-	Branch   string
-	IsMain   bool
+	ID        string
+	ProjectID string
+	RepoPath  string
+	Path      string
+	Branch    string
+	IsMain    bool
 }
 
 // Session is one agent or shell process managed by canopy.

@@ -65,22 +65,6 @@ canopy daemon stop
 
 `session kill` asks for confirmation before terminating a session.
 
-## Persistence
-
-Canopy stores its SQLite database at:
-
-```text
-~/.local/share/canopy/canopy.db
-```
-
-The database contains `projects`, `worktrees`, and `sessions` tables. You can inspect it with:
-
-```bash
-sqlite3 ~/.local/share/canopy/canopy.db
-```
-
-Claude hook configuration is written to `.claude/settings.local.json` in each session's working directory. This file is local runtime state and should not be committed.
-
 ## Build from source
 
 Requires Go. The repository includes a conventional `Makefile`:
@@ -99,9 +83,8 @@ You can customize the install location:
 make install PREFIX="$HOME/.local"
 ```
 
-## Architecture
-
-The TUI is a client. A background daemon owns the PTYs and communicates with clients over a Unix socket. SQLite stores session metadata, including Claude's native resume ID. This lets the daemon recreate sessions after a daemon or TUI restart.
+For implementation details, persistence, hooks, recovery behavior, and known limitations,
+see the [technical design](docs/plan/spec.md).
 
 ## License
 

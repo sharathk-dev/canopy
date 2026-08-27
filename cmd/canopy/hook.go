@@ -22,13 +22,11 @@ var hookCmd = &cobra.Command{
 
 var (
 	flagHookSession string
-	flagHookToken   string
 	flagHookEvent   string
 )
 
 func init() {
 	hookCmd.Flags().StringVar(&flagHookSession, "session", "", "Session ID")
-	hookCmd.Flags().StringVar(&flagHookToken, "token", "", "Hook token")
 	hookCmd.Flags().StringVar(&flagHookEvent, "event", "", "Hook event type")
 	rootCmd.AddCommand(hookCmd)
 }

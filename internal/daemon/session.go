@@ -16,14 +16,13 @@ import (
 )
 
 type sessionProc struct {
-	id        string
-	hookToken string
-	ptmx      *os.File
-	term      vt10x.Terminal
-	mu        sync.Mutex
-	subs      map[string]chan []byte
-	done      chan struct{}
-	exitErr   error
+	id      string
+	ptmx    *os.File
+	term    vt10x.Terminal
+	mu      sync.Mutex
+	subs    map[string]chan []byte
+	done    chan struct{}
+	exitErr error
 }
 
 func startSession(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector) (*sessionProc, error) {
@@ -43,8 +42,10 @@ func restoreSession(sess protocol.Session, db *store.Store, injector hooks.Injec
 }
 
 func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector, existing *protocol.Session) (*sessionProc, error) {
-	hookToken := protocol.NewID()
 	procID := protocol.NewID()
+	if existing != nil {
+		procID = existing.ID
+	}
 
 	args := []string{}
 	if params.Tool == "claude" && params.CLISessionID != "" {
@@ -70,17 +71,12 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
 
-	if existing != nil {
-		procID = existing.ID
-		cmd.Env = append(os.Environ(), "CANOPY_SESSION_ID="+procID)
-	}
 	proc := &sessionProc{
-		id:        procID,
-		hookToken: hookToken,
-		ptmx:      ptmx,
-		term:      vt10x.New(vt10x.WithSize(int(cols), int(rows))),
-		subs:      make(map[string]chan []byte),
-		done:      make(chan struct{}),
+		id:   procID,
+		ptmx: ptmx,
+		term: vt10x.New(vt10x.WithSize(int(cols), int(rows))),
+		subs: make(map[string]chan []byte),
+		done: make(chan struct{}),
 	}
 
 	sess := protocol.Session{
@@ -114,7 +110,7 @@ func startSessionRecord(params protocol.NewSessionParams, db *store.Store, injec
 		return nil, dbErr
 	}
 
-	_ = injector.Inject(proc.id, params.CWD, hookToken)
+	_ = injector.Inject(proc.id, params.CWD)
 
 	go proc.readLoop()
 	go proc.waitLoop(cmd, db, injector)

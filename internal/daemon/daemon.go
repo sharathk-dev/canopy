@@ -30,7 +30,7 @@ func New(db *store.Store, sockPath string) *Daemon {
 	var mtime int64
 	if exe, err := os.Executable(); err == nil {
 		if fi, err := os.Stat(exe); err == nil {
-			mtime = fi.ModTime().Unix()
+			mtime = fi.ModTime().UnixNano()
 		}
 	}
 	return &Daemon{
@@ -94,11 +94,12 @@ func (d *Daemon) reconcileWorktrees() {
 				continue
 			}
 			seen[info.Path] = true
-			wt, lookupErr := d.db.GetWorktreeByPath(info.Path)
+			wt, lookupErr := d.db.GetWorktreeByRepoAndPath(project.RepoPath, info.Path)
 			if lookupErr != nil {
 				wt.ID = protocol.NewID()
 			}
 			wt.RepoPath = project.RepoPath
+			wt.ProjectID = project.ID
 			wt.Path = info.Path
 			wt.Branch = info.Branch
 			wt.IsMain = info.IsMain

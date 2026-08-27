@@ -32,6 +32,8 @@ daemon or TUI is restarted.
   tree; reappearing paths reuse their original IDs.
 - Canopy session IDs remain stable across restoration, so the TUI and database continue
   referring to the same session row.
+- Worktree reconciliation is authoritative: Git determines which worktrees exist, while
+  SQLite retains missing rows for session history and possible reappearance.
 
 ## Data model
 
@@ -43,11 +45,12 @@ type Project struct {
 }
 
 type Worktree struct {
-    ID       string
-    RepoPath string
-    Path     string
-    Branch   string
-    IsMain   bool
+    ID        string
+    ProjectID string
+    RepoPath  string
+    Path      string
+    Branch    string
+    IsMain    bool
 }
 
 type Session struct {
@@ -66,7 +69,10 @@ type Session struct {
 ```
 
 SQLite tables are `projects`, `worktrees`, and `sessions`. Session metadata is persisted
-at `~/.local/share/canopy/canopy.db`.
+at `~/.local/share/canopy/canopy.db`. Project removal is a soft-unregister; worktrees and
+sessions are retained. A Git worktree removed outside Canopy is marked missing on the next
+daemon startup. Explicit `canopy worktree remove` also marks it missing rather than deleting
+the historical row.
 
 The session state values are:
 
@@ -77,7 +83,7 @@ The session state values are:
 | `needs_input` | Waiting | Claude `Stop` hook received |
 | `finished` | Finished | Process exits successfully |
 | `terminated` | Terminated | Process exits with an error or is killed |
-| `disconnected` | Disconnected | Reserved for future connection recovery |
+| `disconnected` | Disconnected | Worktree or session directory is no longer available |
 
 Titles are requested when a session is created in the TUI. A typed title is saved
 immediately; an empty title receives a short random `session_` name. Titles can later be
@@ -156,6 +162,7 @@ docs/plan/           Design notes
 
 - Only Claude Code has lifecycle-hook integration; other tools currently run without
   native status or resume support.
+
 - If Claude has not emitted a hook yet, its native session ID is unknown and restoration
   starts a fresh process.
 - A stale or deleted Claude native session ID should eventually fall back automatically

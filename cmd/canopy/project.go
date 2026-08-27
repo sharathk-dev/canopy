@@ -61,7 +61,7 @@ func runProjectAdd(_ *cobra.Command, args []string) error {
 	// identity, worktrees, and sessions.
 	if existing, err := db.GetProjectByRepoPath(root); err == nil {
 		_ = db.RestoreProject(existing.ID)
-		seedWorktrees(db, root)
+		seedWorktrees(db, root, existing.ID)
 		fmt.Printf("project restored: %s (%s)\n", existing.Name, existing.RepoPath)
 		return nil
 	}
@@ -75,7 +75,7 @@ func runProjectAdd(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("save project: %w", err)
 	}
 
-	seedWorktrees(db, root)
+	seedWorktrees(db, root, proj.ID)
 	fmt.Printf("project registered: %s (%s)\n", proj.Name, proj.RepoPath)
 	return nil
 }
@@ -105,22 +105,23 @@ func runProjectList(_ *cobra.Command, _ []string) error {
 }
 
 // seedWorktrees upserts all current git worktrees for repoPath into the DB.
-func seedWorktrees(db *store.Store, repoPath string) {
+func seedWorktrees(db *store.Store, repoPath, projectID string) {
 	wts, err := git.ListWorktrees(repoPath)
 	if err != nil {
 		return
 	}
 	for _, wt := range wts {
-		stored, err := db.GetWorktreeByPath(wt.Path)
+		stored, err := db.GetWorktreeByRepoAndPath(repoPath, wt.Path)
 		if err != nil {
 			stored.ID = protocol.NewID()
 		}
 		_ = db.UpsertWorktree(protocol.Worktree{
-			ID:       stored.ID,
-			RepoPath: repoPath,
-			Path:     wt.Path,
-			Branch:   wt.Branch,
-			IsMain:   wt.IsMain,
+			ID:        stored.ID,
+			ProjectID: projectID,
+			RepoPath:  repoPath,
+			Path:      wt.Path,
+			Branch:    wt.Branch,
+			IsMain:    wt.IsMain,
 		})
 	}
 }

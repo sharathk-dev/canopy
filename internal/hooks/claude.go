@@ -20,7 +20,7 @@ type ClaudeInjector struct {
 	SocketPath string // daemon unix socket path (for canopy _hook to dial)
 }
 
-func (ci ClaudeInjector) Inject(sessionID, cwd, hookToken string) error {
+func (ci ClaudeInjector) Inject(sessionID, cwd string) error {
 	path := filepath.Join(cwd, settingsFile)
 	settings, err := readSettings(path)
 	if err != nil {
@@ -46,15 +46,6 @@ func (ci ClaudeInjector) Inject(sessionID, cwd, hookToken string) error {
 
 	settings["hooks"] = hooks
 	return writeSettings(path, settings)
-}
-
-func (ci ClaudeInjector) Remove(sessionID string) error {
-	// Remove is best-effort: called when a session exits or is killed.
-	// We scan all registered projects' CWDs... but at Remove time we only have
-	// the sessionID. The daemon calls Remove with the session's CWD embedded
-	// by the caller, so we receive it indirectly via the cwd parameter below.
-	// For now Remove is a no-op; the next Inject call will overwrite stale entries.
-	return nil
 }
 
 // RemoveFromCWD removes canopy-managed hooks for sessionID from cwd's settings file.

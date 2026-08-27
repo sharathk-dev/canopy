@@ -8,7 +8,7 @@ fmt:
 	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
 
 check:
-	@test -z "$$(gofmt -l .)" || (echo "Go files need formatting; run 'make fmt'"; exit 1)
+	@test -z "$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*'))" || (echo "Go files need formatting; run 'make fmt'"; exit 1)
 	go test ./...
 
 build:

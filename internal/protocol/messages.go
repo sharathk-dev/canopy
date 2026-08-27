@@ -7,19 +7,11 @@ const (
 	CmdVersion         = "version"
 	CmdNewSession      = "new_session"
 	CmdAttach          = "attach"
-	CmdDetach          = "detach"
-	CmdListSessions    = "list_sessions"
 	CmdKillSession     = "kill_session"
 	CmdInput           = "input"
-	CmdRegisterProject = "register_project"
-	CmdListProjects    = "list_projects"
-	CmdHookEvent       = "hook_event"
 	CmdUpdateTitle     = "update_title"
 	CmdSessionSnapshot = "session_snapshot"
 	CmdResizeSession   = "resize_session"
-	CmdListWorktrees   = "list_worktrees"
-	CmdAddWorktree     = "add_worktree"
-	CmdRemoveWorktree  = "remove_worktree"
 )
 
 // Cmd is a client→daemon command envelope.
@@ -69,20 +61,8 @@ type AttachParams struct {
 	SessionID string `json:"session_id"`
 }
 
-type DetachParams struct {
-	SessionID string `json:"session_id"`
-}
-
 type KillSessionParams struct {
 	SessionID string `json:"session_id"`
-}
-
-// HookEventParams is sent by `canopy _hook` when Claude fires a lifecycle hook.
-type HookEventParams struct {
-	SessionID string          `json:"session_id"`
-	Token     string          `json:"token"`
-	EventType string          `json:"event_type"` // PreToolUse | PostToolUse | Stop | UserPromptSubmit
-	Data      json.RawMessage `json:"data,omitempty"`
 }
 
 // Claude hook event types.
@@ -94,7 +74,7 @@ const (
 )
 
 type VersionResponse struct {
-	BinaryMtime int64 `json:"binary_mtime"` // Unix timestamp of the daemon binary
+	BinaryMtime int64 `json:"binary_mtime"` // Nanosecond mtime of the daemon binary
 }
 
 type SnapshotParams struct {
@@ -108,23 +88,4 @@ type SnapshotResponse struct {
 type UpdateTitleParams struct {
 	SessionID string `json:"session_id"`
 	Title     string `json:"title"`
-}
-
-type RegisterProjectParams struct {
-	// RepoPath is the absolute path to the git repository root.
-	// If empty the daemon resolves it via git rev-parse on Dir.
-	RepoPath string `json:"repo_path"`
-	Name     string `json:"name"` // optional; defaults to basename of RepoPath
-}
-
-type AddWorktreeParams struct {
-	RepoPath string `json:"repo_path"` // resolved by daemon if empty
-	Branch   string `json:"branch"`
-	Path     string `json:"path"` // optional; daemon picks a sibling dir if empty
-}
-
-type RemoveWorktreeParams struct {
-	RepoPath string `json:"repo_path"`
-	Path     string `json:"path"`
-	Force    bool   `json:"force"`
 }

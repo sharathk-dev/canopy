@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -62,6 +63,8 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE sessions ADD COLUMN pid INTEGER NOT NULL DEFAULT 0`)
 	// Migration: project removal is a reversible soft-unregister.
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`)
+	// Backfill ownership for databases created before worktrees carried it.
+	_, _ = db.Exec(`UPDATE worktrees SET project_id=(SELECT id FROM projects WHERE projects.repo_path=worktrees.repo_path) WHERE project_id=''`)
 	return &Store{db: db}, nil
 }
 
@@ -135,24 +138,24 @@ func (s *Store) UpsertWorktree(w protocol.Worktree) error {
 		   branch=excluded.branch,
 		   is_main=excluded.is_main,
 		   missing=0`,
-		w.ID, "", w.RepoPath, w.Path, w.Branch, boolInt(w.IsMain),
+		w.ID, w.ProjectID, w.RepoPath, w.Path, w.Branch, boolInt(w.IsMain),
 	)
 	return err
 }
 
 func (s *Store) GetWorktree(id string) (protocol.Worktree, error) {
 	row := s.db.QueryRow(
-		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE id=?`, id)
+		`SELECT id,project_id,repo_path,path,branch,is_main FROM worktrees WHERE id=?`, id)
 	var w protocol.Worktree
 	var isMain int
-	err := row.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
+	err := row.Scan(&w.ID, &w.ProjectID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
 	w.IsMain = isMain != 0
 	return w, err
 }
 
 func (s *Store) ListWorktreesByRepo(repoPath string) ([]protocol.Worktree, error) {
 	rows, err := s.db.Query(
-		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE repo_path=? AND missing=0 ORDER BY path`,
+		`SELECT id,project_id,repo_path,path,branch,is_main FROM worktrees WHERE repo_path=? AND missing=0 ORDER BY path`,
 		repoPath,
 	)
 	if err != nil {
@@ -163,7 +166,7 @@ func (s *Store) ListWorktreesByRepo(repoPath string) ([]protocol.Worktree, error
 	for rows.Next() {
 		var w protocol.Worktree
 		var isMain int
-		if err := rows.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain); err != nil {
+		if err := rows.Scan(&w.ID, &w.ProjectID, &w.RepoPath, &w.Path, &w.Branch, &isMain); err != nil {
 			return nil, err
 		}
 		w.IsMain = isMain != 0
@@ -183,17 +186,23 @@ func (s *Store) IsWorktreeMissing(id string) (bool, error) {
 	return missing != 0, err
 }
 
-func (s *Store) DeleteWorktree(id string) error {
-	_, err := s.db.Exec(`DELETE FROM worktrees WHERE id=?`, id)
-	return err
-}
-
 func (s *Store) GetWorktreeByPath(path string) (protocol.Worktree, error) {
 	row := s.db.QueryRow(
-		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE path=?`, path)
+		`SELECT id,project_id,repo_path,path,branch,is_main FROM worktrees WHERE path=?`, path)
 	var w protocol.Worktree
 	var isMain int
-	err := row.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
+	err := row.Scan(&w.ID, &w.ProjectID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
+	w.IsMain = isMain != 0
+	return w, err
+}
+
+// GetWorktreeByRepoAndPath avoids matching the same path across repositories.
+func (s *Store) GetWorktreeByRepoAndPath(repoPath, path string) (protocol.Worktree, error) {
+	row := s.db.QueryRow(
+		`SELECT id,project_id,repo_path,path,branch,is_main FROM worktrees WHERE repo_path=? AND path=?`, repoPath, path)
+	var w protocol.Worktree
+	var isMain int
+	err := row.Scan(&w.ID, &w.ProjectID, &w.RepoPath, &w.Path, &w.Branch, &isMain)
 	w.IsMain = isMain != 0
 	return w, err
 }
@@ -201,7 +210,7 @@ func (s *Store) GetWorktreeByPath(path string) (protocol.Worktree, error) {
 // GetWorktreeByPathPrefix finds the worktree whose path is the longest prefix of dir.
 func (s *Store) GetWorktreeByPathPrefix(dir string) (protocol.Worktree, error) {
 	rows, err := s.db.Query(
-		`SELECT id,repo_path,path,branch,is_main FROM worktrees WHERE missing=0 ORDER BY length(path) DESC`)
+		`SELECT id,project_id,repo_path,path,branch,is_main FROM worktrees WHERE missing=0 ORDER BY length(path) DESC`)
 	if err != nil {
 		return protocol.Worktree{}, err
 	}
@@ -209,11 +218,12 @@ func (s *Store) GetWorktreeByPathPrefix(dir string) (protocol.Worktree, error) {
 	for rows.Next() {
 		var w protocol.Worktree
 		var isMain int
-		if err := rows.Scan(&w.ID, &w.RepoPath, &w.Path, &w.Branch, &isMain); err != nil {
+		if err := rows.Scan(&w.ID, &w.ProjectID, &w.RepoPath, &w.Path, &w.Branch, &isMain); err != nil {
 			return protocol.Worktree{}, err
 		}
 		w.IsMain = isMain != 0
-		if strings.HasPrefix(dir, w.Path) {
+		rel, err := filepath.Rel(w.Path, dir)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return w, nil
 		}
 	}
