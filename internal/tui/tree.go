@@ -161,6 +161,16 @@ func selectedSession(items []treeItem, cursor int) *protocol.Session {
 	return nil
 }
 
+// firstSessionIndex returns the index of the first session item, or -1.
+func firstSessionIndex(items []treeItem) int {
+	for i, item := range items {
+		if item.kind == kindSession {
+			return i
+		}
+	}
+	return -1
+}
+
 // breadcrumb returns the "project / worktree / tool" string for the header.
 func breadcrumb(items []treeItem, cursor int) string {
 	if cursor < 0 || cursor >= len(items) {

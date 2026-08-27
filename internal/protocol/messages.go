@@ -4,16 +4,19 @@ import "encoding/json"
 
 // Command type constants.
 const (
+	CmdVersion         = "version"
 	CmdNewSession      = "new_session"
 	CmdAttach          = "attach"
 	CmdDetach          = "detach"
 	CmdListSessions    = "list_sessions"
 	CmdKillSession     = "kill_session"
+	CmdInput           = "input"
 	CmdRegisterProject = "register_project"
 	CmdListProjects    = "list_projects"
 	CmdHookEvent       = "hook_event"
 	CmdUpdateTitle      = "update_title"
 	CmdSessionSnapshot  = "session_snapshot"
+	CmdResizeSession    = "resize_session"
 	CmdListWorktrees   = "list_worktrees"
 	CmdAddWorktree     = "add_worktree"
 	CmdRemoveWorktree  = "remove_worktree"
@@ -44,6 +47,19 @@ type NewSessionParams struct {
 	WorktreeID string `json:"worktree_id"` // may be empty
 	Tool       string `json:"tool"`        // "claude" | "codex" | ""
 	CWD        string `json:"cwd"`
+	Rows       uint16 `json:"rows"` // 0 = use default
+	Cols       uint16 `json:"cols"` // 0 = use default
+}
+
+type ResizeSessionParams struct {
+	SessionID string `json:"session_id"`
+	Rows      uint16 `json:"rows"`
+	Cols      uint16 `json:"cols"`
+}
+
+type InputParams struct {
+	SessionID string `json:"session_id"`
+	Data      []byte `json:"data"`
 }
 
 type AttachParams struct {
@@ -73,6 +89,10 @@ const (
 	HookStop             = "Stop"
 	HookUserPromptSubmit = "UserPromptSubmit"
 )
+
+type VersionResponse struct {
+	BinaryMtime int64 `json:"binary_mtime"` // Unix timestamp of the daemon binary
+}
 
 type SnapshotParams struct {
 	SessionID string `json:"session_id"`

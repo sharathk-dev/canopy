@@ -4,39 +4,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/store"
 )
 
-// daemonData holds a full snapshot of daemon state for one render cycle.
+// daemonData holds a full snapshot of state for one render cycle.
 type daemonData struct {
 	projects  []protocol.Project
 	worktrees map[string][]protocol.Worktree // repoPath → []Worktree
 	sessions  map[string][]protocol.Session  // worktreeID → []Session
 }
 
-// fetchAll pulls projects, worktrees, and sessions from the daemon in one connection burst.
-func fetchAll(sockPath string) (daemonData, error) {
-	projects, err := fetchProjects(sockPath)
+// fetchAll reads projects, worktrees, and sessions directly from SQLite.
+func fetchAll(dbPath string) (daemonData, error) {
+	db, err := store.Open(dbPath)
 	if err != nil {
-		return daemonData{}, fmt.Errorf("projects: %w", err)
+		return daemonData{}, err
+	}
+	defer db.Close()
+
+	projects, err := db.ListProjects()
+	if err != nil {
+		return daemonData{}, err
 	}
 
 	worktrees := make(map[string][]protocol.Worktree)
 	for _, p := range projects {
-		wts, err := fetchWorktrees(sockPath, p.RepoPath)
-		if err != nil {
-			continue
-		}
+		wts, _ := db.ListWorktreesByRepo(p.RepoPath)
 		worktrees[p.RepoPath] = wts
 	}
 
-	allSessions, err := fetchSessions(sockPath)
+	allSessions, err := db.ListActiveSessions()
 	if err != nil {
-		return daemonData{}, fmt.Errorf("sessions: %w", err)
+		return daemonData{}, err
 	}
 
-	// Index sessions by worktree ID.
 	sessionsByWT := make(map[string][]protocol.Session)
 	for _, s := range allSessions {
 		sessionsByWT[s.WorktreeID] = append(sessionsByWT[s.WorktreeID], s)
@@ -49,40 +53,7 @@ func fetchAll(sockPath string) (daemonData, error) {
 	}, nil
 }
 
-func fetchProjects(sockPath string) ([]protocol.Project, error) {
-	raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdListProjects})
-	if err != nil {
-		return nil, err
-	}
-	var out []protocol.Project
-	return out, json.Unmarshal(raw, &out)
-}
-
-func fetchWorktrees(sockPath, repoPath string) ([]protocol.Worktree, error) {
-	p, _ := json.Marshal(map[string]string{"repo_path": repoPath})
-	raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdListWorktrees, Payload: p})
-	if err != nil {
-		return nil, err
-	}
-	var out []protocol.Worktree
-	return out, json.Unmarshal(raw, &out)
-}
-
-func fetchSessions(sockPath string) ([]protocol.Session, error) {
-	raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdListSessions})
-	if err != nil {
-		return nil, err
-	}
-	var out []protocol.Session
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = []protocol.Session{}
-	}
-	return out, nil
-}
-
+// fetchSnapshot gets the current PTY snapshot for a session from the daemon.
 func fetchSnapshot(sockPath, sessionID string) (string, error) {
 	p, _ := json.Marshal(protocol.SnapshotParams{SessionID: sessionID})
 	raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdSessionSnapshot, Payload: p})
@@ -96,7 +67,7 @@ func fetchSnapshot(sockPath, sessionID string) (string, error) {
 	return resp.Text, nil
 }
 
-// rpc sends one JSON command over a fresh unix socket connection and returns the response Data.
+// rpc sends one command to the daemon over a fresh connection and returns Data.
 func rpc(sockPath string, cmd protocol.Cmd) (json.RawMessage, error) {
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
@@ -121,4 +92,14 @@ func rpc(sockPath string, cmd protocol.Cmd) (json.RawMessage, error) {
 		return nil, fmt.Errorf("%s", resp.Error)
 	}
 	return resp.Data, nil
+}
+
+func isDaemonDown(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "no such file") ||
+		strings.Contains(s, "connect:")
 }

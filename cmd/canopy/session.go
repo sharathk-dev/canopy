@@ -10,8 +10,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/sharathk-dev/canopy/internal/daemon"
+	"github.com/sharathk-dev/canopy/internal/datadir"
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -28,14 +29,8 @@ var (
 
 var sessionNewCmd = &cobra.Command{
 	Use:   "new",
-	Short: "Create a new agent session",
+	Short: "Start a new agent session",
 	RunE:  runSessionNew,
-}
-
-var sessionListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List active sessions",
-	RunE:  runSessionList,
 }
 
 var sessionAttachCmd = &cobra.Command{
@@ -45,28 +40,26 @@ var sessionAttachCmd = &cobra.Command{
 	RunE:  runSessionAttach,
 }
 
-var sessionRenameCmd = &cobra.Command{
-	Use:   "rename <session-id> <title>",
-	Short: "Rename a session (locks the title against auto-update)",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runSessionRename,
+var sessionListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List active sessions",
+	RunE:  runSessionList,
 }
 
 var sessionKillCmd = &cobra.Command{
 	Use:   "kill <session-id>",
-	Short: "Kill a running session",
+	Short: "Kill a session",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runSessionKill,
 }
 
 func init() {
-	sessionNewCmd.Flags().StringVar(&flagTool, "tool", "claude", "Agent tool: claude, codex, or '' for shell")
+	sessionNewCmd.Flags().StringVar(&flagTool, "tool", "claude", "Agent tool to launch")
 	sessionNewCmd.Flags().StringVar(&flagCWD, "cwd", "", "Working directory (default: current directory)")
 
 	sessionCmd.AddCommand(sessionNewCmd)
-	sessionCmd.AddCommand(sessionListCmd)
 	sessionCmd.AddCommand(sessionAttachCmd)
-	sessionCmd.AddCommand(sessionRenameCmd)
+	sessionCmd.AddCommand(sessionListCmd)
 	sessionCmd.AddCommand(sessionKillCmd)
 }
 
@@ -82,34 +75,117 @@ func runSessionNew(_ *cobra.Command, _ []string) error {
 
 	params := protocol.NewSessionParams{Tool: flagTool, CWD: cwd}
 	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdNewSession, Payload: raw}
-
-	resp, err := sendCmd(cmd)
+	resp, err := sendDaemonCmd(protocol.Cmd{Type: protocol.CmdNewSession, Payload: raw})
 	if err != nil {
-		return err
+		return fmt.Errorf("daemon not running — start it with: canopy daemon start\n%w", err)
 	}
 
 	var sess protocol.Session
 	if err := json.Unmarshal(resp.Data, &sess); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
-	fmt.Printf("session created: %s\n", sess.ID)
-	fmt.Printf("  tool: %s\n  cwd:  %s\n", sess.Tool, sess.CWD)
+
+	fmt.Printf("session %s started\n", sess.ID)
+	return runSessionAttach(nil, []string{sess.ID})
+}
+
+func runSessionAttach(_ *cobra.Command, args []string) error {
+	sessionID := args[0]
+
+	conn, err := dialDaemon()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	params := protocol.AttachParams{SessionID: sessionID}
+	raw, _ := json.Marshal(params)
+	cmdBytes, _ := json.Marshal(protocol.Cmd{Type: protocol.CmdAttach, Payload: raw})
+	if err := protocol.WriteFrame(conn, protocol.FrameJSON, cmdBytes); err != nil {
+		return err
+	}
+
+	// First frame may be a PTY snapshot (scrollback), second is the OK response.
+	typ, payload, err := protocol.ReadFrame(conn)
+	if err != nil {
+		return err
+	}
+	if typ == protocol.FramePTY {
+		os.Stdout.Write(payload) //nolint:errcheck
+		// Read the OK frame.
+		typ, payload, err = protocol.ReadFrame(conn)
+		if err != nil {
+			return err
+		}
+	}
+	if typ == protocol.FrameJSON {
+		var resp protocol.Response
+		if err := json.Unmarshal(payload, &resp); err == nil && !resp.OK {
+			return fmt.Errorf("attach failed: %s", resp.Error)
+		}
+	}
+
+	fd := int(os.Stdin.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("raw mode: %w", err)
+	}
+	defer term.Restore(fd, oldState) //nolint:errcheck
+
+	// Forward resize signals.
+	resizeSig := make(chan os.Signal, 1)
+	signal.Notify(resizeSig, syscall.SIGWINCH)
+	go func() {
+		for range resizeSig {
+			cols, rows, _ := term.GetSize(fd)
+			rz, _ := json.Marshal(protocol.ResizePayload{Rows: uint16(rows), Cols: uint16(cols)})
+			_ = protocol.WriteFrame(conn, protocol.FrameResize, rz)
+		}
+	}()
+	cols, rows, _ := term.GetSize(fd)
+	rz, _ := json.Marshal(protocol.ResizePayload{Rows: uint16(rows), Cols: uint16(cols)})
+	_ = protocol.WriteFrame(conn, protocol.FrameResize, rz)
+
+	// stdin → daemon.
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				_ = protocol.WriteFrame(conn, protocol.FramePTY, buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	// daemon PTY → stdout.
+	for {
+		typ, payload, err := protocol.ReadFrame(conn)
+		if err != nil {
+			break
+		}
+		if typ == protocol.FramePTY {
+			os.Stdout.Write(payload) //nolint:errcheck
+		}
+	}
+
+	signal.Stop(resizeSig)
 	return nil
 }
 
 func runSessionList(_ *cobra.Command, _ []string) error {
-	cmd := protocol.Cmd{Type: protocol.CmdListSessions}
-	resp, err := sendCmd(cmd)
+	db, err := store.Open(datadir.DBPath())
 	if err != nil {
-		return err
+		return fmt.Errorf("open store: %w", err)
 	}
+	defer db.Close()
 
-	var sessions []protocol.Session
-	if err := json.Unmarshal(resp.Data, &sessions); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	sessions, err := db.ListActiveSessions()
+	if err != nil {
+		return fmt.Errorf("list sessions: %w", err)
 	}
-
 	if len(sessions) == 0 {
 		fmt.Println("no active sessions")
 		return nil
@@ -128,130 +204,49 @@ func runSessionList(_ *cobra.Command, _ []string) error {
 	return w.Flush()
 }
 
-func runSessionAttach(_ *cobra.Command, args []string) error {
-	sessionID := args[0]
-	conn, err := dialDaemon()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	// Send attach command.
-	params := protocol.AttachParams{SessionID: sessionID}
-	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdAttach, Payload: raw}
-	cmdBytes, _ := json.Marshal(cmd)
-	if err := protocol.WriteFrame(conn, protocol.FrameJSON, cmdBytes); err != nil {
-		return err
-	}
-
-	// Read the first response (confirmation or error).
-	typ, payload, err := protocol.ReadFrame(conn)
-	if err != nil {
-		return err
-	}
-	if typ == protocol.FrameJSON {
-		var resp protocol.Response
-		if err := json.Unmarshal(payload, &resp); err == nil && !resp.OK {
-			return fmt.Errorf("attach failed: %s", resp.Error)
-		}
-		// First JSON frame was the OK confirmation; PTY bytes follow.
-	}
-
-	// Switch stdin to raw mode.
-	fd := int(os.Stdin.Fd())
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return fmt.Errorf("raw mode: %w", err)
-	}
-	defer term.Restore(fd, oldState) //nolint:errcheck
-
-	// Forward terminal resize signals to the daemon.
-	resizeSig := make(chan os.Signal, 1)
-	signal.Notify(resizeSig, syscall.SIGWINCH)
-	go func() {
-		for range resizeSig {
-			cols, rows, _ := term.GetSize(fd)
-			rz, _ := json.Marshal(protocol.ResizePayload{Rows: uint16(rows), Cols: uint16(cols)})
-			_ = protocol.WriteFrame(conn, protocol.FrameResize, rz)
-		}
-	}()
-	// Send initial size.
-	cols, rows, _ := term.GetSize(fd)
-	rz, _ := json.Marshal(protocol.ResizePayload{Rows: uint16(rows), Cols: uint16(cols)})
-	_ = protocol.WriteFrame(conn, protocol.FrameResize, rz)
-
-	// Forward stdin → daemon.
-	go func() {
-		buf := make([]byte, 256)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
-				_ = protocol.WriteFrame(conn, protocol.FramePTY, buf[:n])
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	// Daemon PTY output → stdout.
-	for {
-		typ, payload, err := protocol.ReadFrame(conn)
-		if err != nil {
-			break
-		}
-		if typ == protocol.FramePTY {
-			os.Stdout.Write(payload) //nolint:errcheck
-		}
-	}
-
-	signal.Stop(resizeSig)
-	return nil
-}
-
-func runSessionRename(_ *cobra.Command, args []string) error {
-	params := protocol.UpdateTitleParams{SessionID: args[0], Title: args[1]}
-	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdUpdateTitle, Payload: raw}
-	resp, err := sendCmd(cmd)
-	if err != nil {
-		return err
-	}
-	var sess protocol.Session
-	if err := json.Unmarshal(resp.Data, &sess); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	fmt.Printf("session %s renamed to %q (locked)\n", sess.ID, sess.Title)
-	return nil
-}
-
 func runSessionKill(_ *cobra.Command, args []string) error {
+	// Try daemon first so it can cleanly tear down the PTY.
 	params := protocol.KillSessionParams{SessionID: args[0]}
 	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdKillSession, Payload: raw}
-	resp, err := sendCmd(cmd)
+	if _, err := sendDaemonCmd(protocol.Cmd{Type: protocol.CmdKillSession, Payload: raw}); err == nil {
+		fmt.Printf("session %s killed\n", args[0])
+		return nil
+	}
+
+	// Daemon not running — fall back to direct DB + SIGTERM.
+	db, err := store.Open(datadir.DBPath())
 	if err != nil {
-		return err
+		return fmt.Errorf("open store: %w", err)
 	}
-	if !resp.OK {
-		return fmt.Errorf("kill failed: %s", resp.Error)
+	defer db.Close()
+
+	sess, err := db.GetSession(args[0])
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
 	}
-	fmt.Printf("session %s killed\n", args[0])
+	if sess.PID > 0 {
+		if proc, err := os.FindProcess(sess.PID); err == nil {
+			_ = proc.Signal(syscall.SIGTERM)
+		}
+	}
+	sess.State = protocol.StateTerminated
+	sess.Archived = true
+	_ = db.UpdateSession(sess)
+	fmt.Printf("session %s killed\n", sess.ID)
 	return nil
 }
 
 // --- helpers ---
 
 func dialDaemon() (net.Conn, error) {
-	conn, err := net.Dial("unix", daemon.SocketPath())
+	conn, err := net.Dial("unix", datadir.SocketPath())
 	if err != nil {
-		return nil, fmt.Errorf("cannot connect to daemon (is it running? try: canopy daemon start): %w", err)
+		return nil, fmt.Errorf("cannot connect to daemon (run: canopy daemon start): %w", err)
 	}
 	return conn, nil
 }
 
-func sendCmd(cmd protocol.Cmd) (protocol.Response, error) {
+func sendDaemonCmd(cmd protocol.Cmd) (protocol.Response, error) {
 	conn, err := dialDaemon()
 	if err != nil {
 		return protocol.Response{}, err
@@ -263,17 +258,14 @@ func sendCmd(cmd protocol.Cmd) (protocol.Response, error) {
 		return protocol.Response{}, err
 	}
 
-	typ, data, err := protocol.ReadFrame(conn)
+	_, data, err := protocol.ReadFrame(conn)
 	if err != nil {
 		return protocol.Response{}, err
-	}
-	if typ != protocol.FrameJSON {
-		return protocol.Response{}, fmt.Errorf("unexpected frame type %d", typ)
 	}
 
 	var resp protocol.Response
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return protocol.Response{}, fmt.Errorf("decode response: %w", err)
+		return protocol.Response{}, err
 	}
 	if !resp.OK {
 		return resp, fmt.Errorf("%s", resp.Error)

@@ -18,7 +18,7 @@ type Worktree struct {
 	IsMain   bool
 }
 
-// Session is one agent or shell process managed by the daemon.
+// Session is one agent or shell process managed by canopy.
 type Session struct {
 	ID           string
 	WorktreeID   string
@@ -30,7 +30,7 @@ type Session struct {
 	TitleLocked  bool
 	State        string
 	Archived     bool
-	TmuxOrPTYRef string
+	PID          int
 	StartedAt    time.Time
 }
 

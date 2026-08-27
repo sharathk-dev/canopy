@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
-	"github.com/sharathk-dev/canopy/internal/daemon"
+	internaldaemon "github.com/sharathk-dev/canopy/internal/daemon"
+	"github.com/sharathk-dev/canopy/internal/datadir"
 	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -33,11 +35,11 @@ var daemonStopCmd = &cobra.Command{
 
 var daemonStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show whether the daemon is running",
+	Short: "Show daemon status",
 	RunE:  runDaemonStatus,
 }
 
-// daemonRunCmd is an internal command invoked by the forked daemon process.
+// _run is the hidden command that actually runs the daemon process.
 var daemonRunCmd = &cobra.Command{
 	Use:    "_run",
 	Hidden: true,
@@ -49,90 +51,56 @@ func init() {
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonRunCmd)
+	rootCmd.AddCommand(daemonCmd)
 }
 
-func runDaemonStart(cmd *cobra.Command, _ []string) error {
-	if isDaemonRunning() {
-		fmt.Println("daemon already running")
-		return nil
-	}
-
+func runDaemonStart(_ *cobra.Command, _ []string) error {
 	exe, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("executable path: %w", err)
-	}
-
-	if err := os.MkdirAll(daemon.DataDir(), 0700); err != nil {
-		return fmt.Errorf("create data dir: %w", err)
-	}
-
-	proc, err := os.StartProcess(exe, []string{exe, "daemon", "_run"}, &os.ProcAttr{
-		Files: []*os.File{nil, nil, nil},
-		Sys:   &syscall.SysProcAttr{Setsid: true},
-	})
-	if err != nil {
-		return fmt.Errorf("fork daemon: %w", err)
-	}
-	fmt.Printf("canopy daemon started (pid %d)\n", proc.Pid)
-	proc.Release() //nolint:errcheck
-	return nil
-}
-
-func runDaemonRun(_ *cobra.Command, _ []string) error {
-	if err := os.MkdirAll(daemon.DataDir(), 0700); err != nil {
 		return err
 	}
 
-	db, err := store.Open(daemon.DBPath())
+	proc, err := os.StartProcess(exe, []string{exe, "daemon", "_run"},
+		&os.ProcAttr{
+			Files: []*os.File{nil, nil, nil},
+			Sys:   &syscall.SysProcAttr{Setsid: true},
+		},
+	)
 	if err != nil {
-		return fmt.Errorf("open db: %w", err)
+		return fmt.Errorf("start daemon: %w", err)
 	}
-	defer db.Close()
 
-	// Write PID file.
-	pidData := []byte(strconv.Itoa(os.Getpid()))
-	if err := os.WriteFile(daemon.PIDPath(), pidData, 0600); err != nil {
-		return fmt.Errorf("write pid: %w", err)
-	}
-	defer os.Remove(daemon.PIDPath())
-
-	d := daemon.New(db, daemon.SocketPath())
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
-	go func() {
-		<-sig
-		cancel()
-	}()
-
-	return d.Run(ctx)
+	fmt.Printf("daemon started (pid %d)\n", proc.Pid)
+	return proc.Release()
 }
 
 func runDaemonStop(_ *cobra.Command, _ []string) error {
-	data, err := os.ReadFile(daemon.PIDPath())
+	pidFile := datadir.PIDPath()
+	data, err := os.ReadFile(pidFile)
 	if err != nil {
 		return fmt.Errorf("daemon not running (no pid file)")
 	}
-	pid, err := strconv.Atoi(string(data))
+
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
-		return fmt.Errorf("invalid pid file")
+		return fmt.Errorf("invalid pid file: %w", err)
 	}
+
 	proc, err := os.FindProcess(pid)
 	if err != nil {
-		return fmt.Errorf("find process %d: %w", pid, err)
+		return fmt.Errorf("find process: %w", err)
 	}
+
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("signal %d: %w", pid, err)
+		return fmt.Errorf("signal daemon: %w", err)
 	}
-	fmt.Printf("sent SIGTERM to daemon (pid %d)\n", pid)
+
+	fmt.Println("daemon stopped")
 	return nil
 }
 
 func runDaemonStatus(_ *cobra.Command, _ []string) error {
-	conn, err := net.Dial("unix", daemon.SocketPath())
+	conn, err := net.Dial("unix", datadir.SocketPath())
 	if err != nil {
 		fmt.Println("daemon: not running")
 		return nil
@@ -142,11 +110,22 @@ func runDaemonStatus(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func isDaemonRunning() bool {
-	conn, err := net.Dial("unix", daemon.SocketPath())
-	if err != nil {
-		return false
+func runDaemonRun(_ *cobra.Command, _ []string) error {
+	pidFile := datadir.PIDPath()
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
+		return fmt.Errorf("write pid file: %w", err)
 	}
-	conn.Close()
-	return true
+	defer os.Remove(pidFile)
+
+	db, err := store.Open(datadir.DBPath())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer db.Close()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	d := internaldaemon.New(db, datadir.SocketPath())
+	return d.Run(ctx)
 }

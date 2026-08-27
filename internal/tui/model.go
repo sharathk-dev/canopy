@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/store"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 // Model is the top-level bubbletea model.
 type Model struct {
 	sockPath string
+	dbPath   string
 
 	// data
 	projects  []protocol.Project
@@ -33,7 +35,7 @@ type Model struct {
 	// tree
 	items    []treeItem
 	cursor   int
-	expanded map[string]bool // "p:<id>" | "w:<id>" → expanded
+	expanded map[string]bool
 
 	// right panel
 	output   string
@@ -42,14 +44,20 @@ type Model struct {
 	// layout
 	width, height int
 	ready         bool
+	rightFocused  bool // true = j/k scroll right pane, false = navigate tree
 
-	err string
+	jumpToSession   bool // set after n key; auto-navigate to first new session
+	sessionLocked   bool // when true, keys are forwarded to the active PTY
+	lockedSessionID string
+	daemonDown      bool
+	err             string
 }
 
 // New creates a new TUI model.
-func New(sockPath string) Model {
+func New(sockPath, dbPath string) Model {
 	return Model{
 		sockPath:  sockPath,
+		dbPath:    dbPath,
 		worktrees: make(map[string][]protocol.Worktree),
 		sessions:  make(map[string][]protocol.Session),
 		expanded:  make(map[string]bool),
@@ -59,18 +67,17 @@ func New(sockPath string) Model {
 // --- tea.Msg types ---
 
 type tickMsg time.Time
+type fastTickMsg time.Time
 type dataMsg daemonData
 type snapshotMsg string
+type sessionCreatedMsg string // session ID
 type errMsg string
 type daemonDownMsg struct{}
 
 // --- Init ---
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		fetchDataCmd(m.sockPath),
-		tickCmd(),
-	)
+	return tea.Batch(fetchDataCmd(m.dbPath), tickCmd())
 }
 
 // --- Update ---
@@ -85,15 +92,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.rebuildViewport()
 		m.ready = true
+		// Resize all active sessions to match the right panel.
+		rows, cols := m.panelSize()
+		for _, wtSessions := range m.sessions {
+			for _, sess := range wtSessions {
+				cmds = append(cmds, resizeSessionCmd(m.sockPath, sess.ID, rows, cols))
+			}
+		}
 
 	case tickMsg:
-		cmds = append(cmds, fetchDataCmd(m.sockPath), tickCmd())
-		if sess := selectedSession(m.items, m.cursor); sess != nil {
+		cmds = append(cmds, fetchDataCmd(m.dbPath), tickCmd())
+		if m.sessionLocked {
+			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID), fastTickCmd())
+		} else if sess := selectedSession(m.items, m.cursor); sess != nil {
 			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, sess.ID))
 		}
 
+	case fastTickMsg:
+		if m.sessionLocked {
+			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID), fastTickCmd())
+		}
+
 	case dataMsg:
-		m.err = "" // clear any previous daemon-down error
+		m.err = ""
 		m.projects = msg.projects
 		m.worktrees = msg.worktrees
 		m.sessions = msg.sessions
@@ -107,20 +128,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildItems()
 		m.clampCursor()
+		if m.jumpToSession {
+			if idx := firstSessionIndex(m.items); idx >= 0 {
+				m.cursor = idx
+				m.jumpToSession = false
+				m.refreshSnapshot(&cmds)
+			}
+		}
+
+	case sessionCreatedMsg:
+		m.sessionLocked = true
+		m.lockedSessionID = string(msg)
+		m.jumpToSession = true
+		cmds = append(cmds, fetchDataCmd(m.dbPath), fastTickCmd())
 
 	case snapshotMsg:
-		m.output = string(msg)
-		m.viewport.SetContent(m.output)
+		if string(msg) != "" {
+			m.output = string(msg)
+			m.viewport.SetContent(m.output)
+		}
 
 	case daemonDownMsg:
-		m.err = "daemon not running"
-		// Keep ticking so we recover automatically when the daemon starts.
-		cmds = append(cmds, tickCmd())
+		m.daemonDown = true
 
 	case errMsg:
 		m.err = string(msg)
 
 	case tea.KeyMsg:
+		if m.sessionLocked {
+			return m.handleLockedKey(msg, cmds)
+		}
 		return m.handleKey(msg, cmds)
 	}
 
@@ -136,35 +173,66 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
+	case "tab":
+		if !m.rightFocused {
+			// Entering right panel: if a session is selected, lock for typing.
+			if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindSession {
+				sess := m.items[m.cursor].session
+				m.sessionLocked = true
+				m.lockedSessionID = sess.ID
+				cmds = append(cmds, fastTickCmd())
+			} else {
+				m.rightFocused = true
+			}
+		} else {
+			m.rightFocused = false
+		}
+
 	case "j", "down":
-		m.cursor++
-		m.clampCursor()
-		m.refreshSnapshot(&cmds)
+		if m.rightFocused {
+			m.viewport.LineDown(1)
+		} else {
+			m.cursor++
+			m.clampCursor()
+			m.refreshSnapshot(&cmds)
+		}
 
 	case "k", "up":
-		if m.cursor > 0 {
-			m.cursor--
+		if m.rightFocused {
+			m.viewport.LineUp(1)
+		} else {
+			if m.cursor > 0 {
+				m.cursor--
+			}
+			m.refreshSnapshot(&cmds)
 		}
-		m.refreshSnapshot(&cmds)
 
 	case " ", "enter":
+		if m.rightFocused {
+			break
+		}
 		m.toggleOrAttach(&cmds)
 
+	case "a":
+		cwd, _ := os.Getwd()
+		return m, tea.ExecProcess(
+			exec.Command(executablePath(), "project", "add", cwd),
+			func(err error) tea.Msg { return fetchDataCmd(m.dbPath)() },
+		)
+
 	case "n":
-		if cwd := m.selectedWorktreeCWD(); cwd != "" {
-			return m, tea.ExecProcess(
-				exec.Command(executablePath(), "session", "new", "--tool=claude", "--cwd="+cwd),
-				func(err error) tea.Msg { return fetchDataCmd(m.sockPath)() },
-			)
+		if cwd := m.selectedCWD(); cwd != "" {
+			rows, cols := m.panelSize()
+			return m, createSessionCmd(m.sockPath, cwd, rows, cols)
 		}
 
 	case "x":
 		if sess := selectedSession(m.items, m.cursor); sess != nil {
-			cmds = append(cmds, killSessionCmd(m.sockPath, sess.ID))
+			cmds = append(cmds, killSessionCmd(m.sockPath, m.dbPath, sess.ID, sess.PID))
 		}
 
 	case "r":
-		cmds = append(cmds, fetchDataCmd(m.sockPath))
+		cmds = append(cmds, fetchDataCmd(m.dbPath))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -178,32 +246,44 @@ func (m *Model) toggleOrAttach(cmds *[]tea.Cmd) {
 
 	switch item.kind {
 	case kindProject:
-		key := "p:" + item.project.ID
-		m.expanded[key] = !m.expanded[key]
+		m.expanded["p:"+item.project.ID] = !m.expanded["p:"+item.project.ID]
 		m.rebuildItems()
 		m.clampCursor()
 
 	case kindWorktree:
-		key := "w:" + item.worktree.ID
-		m.expanded[key] = !m.expanded[key]
+		m.expanded["w:"+item.worktree.ID] = !m.expanded["w:"+item.worktree.ID]
 		m.rebuildItems()
 		m.clampCursor()
 
 	case kindSession:
-		sess := item.session
-		attachCmd := exec.Command(executablePath(), "session", "attach", sess.ID)
-		attachCmd.Stdin = os.Stdin
-		attachCmd.Stdout = os.Stdout
-		attachCmd.Stderr = os.Stderr
-		*cmds = append(*cmds, tea.ExecProcess(attachCmd, func(err error) tea.Msg {
-			return fetchDataCmd(m.sockPath)()
-		}))
+		m.sessionLocked = true
+		m.lockedSessionID = item.session.ID
+		*cmds = append(*cmds, fastTickCmd())
 	}
+}
+
+func (m Model) handleLockedKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Ctrl+Q escapes back to navigation mode.
+	if msg.Type == tea.KeyCtrlQ {
+		m.sessionLocked = false
+		m.lockedSessionID = ""
+		m.rightFocused = false
+		return m, tea.Batch(cmds...)
+	}
+	data := keyToBytes(msg)
+	if len(data) > 0 {
+		cmds = append(cmds, sendInputCmd(m.sockPath, m.lockedSessionID, data))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) refreshSnapshot(cmds *[]tea.Cmd) {
 	if sess := selectedSession(m.items, m.cursor); sess != nil {
-		*cmds = append(*cmds, fetchSnapshotCmd(m.sockPath, sess.ID))
+		rows, cols := m.panelSize()
+		*cmds = append(*cmds,
+			resizeSessionCmd(m.sockPath, sess.ID, rows, cols),
+			fetchSnapshotCmd(m.sockPath, sess.ID),
+		)
 	} else {
 		m.output = ""
 		m.viewport.SetContent("")
@@ -216,7 +296,7 @@ func (m Model) View() string {
 	if !m.ready {
 		return "Loading…\n"
 	}
-	if m.err == "daemon not running" {
+	if m.daemonDown {
 		return lipgloss.JoinVertical(lipgloss.Left,
 			styleHeader.Width(m.width).Render("canopy"),
 			"\n",
@@ -229,11 +309,11 @@ func (m Model) View() string {
 		return fmt.Sprintf("Error: %s\nPress q to quit.\n", m.err)
 	}
 
-	header := m.renderHeader()
-	footer := m.renderFooter()
-	body := m.renderBody()
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.renderHeader(),
+		m.renderBody(),
+		m.renderFooter(),
+	)
 }
 
 func (m Model) renderHeader() string {
@@ -246,25 +326,38 @@ func (m Model) renderHeader() string {
 	}
 
 	left := styleHeaderBreadcrumb.Render(crumb)
-	rightW := lipgloss.Width(right)
-	leftW := lipgloss.Width(left)
-	gap := m.width - leftW - rightW - 2
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if gap < 0 {
 		gap = 0
 	}
-
-	return styleHeader.Width(m.width).Render(
-		left + strings.Repeat(" ", gap) + right,
-	)
+	return styleHeader.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
 func (m Model) renderFooter() string {
-	hints := []string{
-		styleFooterKey.Render("enter") + " attach",
-		styleFooterKey.Render("n") + " new session",
-		styleFooterKey.Render("x") + " kill",
-		styleFooterKey.Render("r") + " refresh",
-		styleFooterKey.Render("q") + " quit",
+	var hints []string
+	if m.sessionLocked {
+		hints = []string{
+			styleFooterKey.Render("ctrl+q") + " back to tree",
+			"  typing goes to Claude",
+		}
+	} else if len(m.projects) == 0 {
+		hints = []string{
+			styleFooterKey.Render("a") + " add project",
+			styleFooterKey.Render("q") + " quit",
+		}
+	} else {
+		paneHint := styleFooterKey.Render("tab") + " → output"
+		if m.rightFocused {
+			paneHint = styleFooterKey.Render("tab") + " → tree"
+		}
+		hints = []string{
+			styleFooterKey.Render("enter") + " expand/attach",
+			styleFooterKey.Render("n") + " new session",
+			styleFooterKey.Render("a") + " add project",
+			styleFooterKey.Render("x") + " kill",
+			paneHint,
+			styleFooterKey.Render("q") + " quit",
+		}
 	}
 	return styleFooter.Width(m.width).Render(strings.Join(hints, "   "))
 }
@@ -273,6 +366,10 @@ func (m Model) renderBody() string {
 	bodyH := m.height - headerHeight - footerHeight
 	if bodyH < 1 {
 		bodyH = 1
+	}
+
+	if len(m.projects) == 0 {
+		return m.renderEmptyState(bodyH)
 	}
 
 	leftW := int(float64(m.width) * leftPanelRatio)
@@ -286,26 +383,74 @@ func (m Model) renderBody() string {
 		treeH = 1
 	}
 
-	left := stylePanelTitle.Width(leftW).Render("PROJECTS") + "\n" +
-		renderTree(m.items, m.cursor, leftW, treeH) +
-		"\n" + styleOutputEmpty.Render("+ n new session")
+	rightActive := m.rightFocused || m.sessionLocked
+
+	// PROJECTS title is blue when tree has focus; divider is blue when right has focus.
+	titleStyle := stylePanelTitle
+	if !rightActive {
+		titleStyle = stylePanelTitle.Foreground(colorSelected)
+	}
+
+	left := titleStyle.Width(leftW).Render("PROJECTS") + "\n" +
+		renderTree(m.items, m.cursor, leftW, treeH)
 
 	divLines := make([]string, bodyH)
 	for i := range divLines {
 		divLines[i] = "│"
 	}
-	divider := styleDivider.Render(strings.Join(divLines, "\n"))
+	divColor := colorBorder
+	if rightActive {
+		divColor = colorSelected
+	}
+	divider := styleDivider.Foreground(divColor).Render(strings.Join(divLines, "\n"))
 
 	var right string
 	if m.output == "" {
-		right = styleOutputEmpty.Width(rightW).Render(
-			"Select a session to preview output.\nPress enter to attach.",
-		)
+		right = m.renderDetail(rightW, bodyH)
 	} else {
-		right = styleOutput.Width(rightW).Render(m.viewport.View())
+		right = m.viewport.View()
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
+}
+
+func (m Model) renderEmptyState(bodyH int) string {
+	pad := strings.Repeat("\n", bodyH/3)
+	content := pad +
+		lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(4).Render("No projects yet.") + "\n\n" +
+		styleOutputEmpty.Render("Press  a  to add the current directory as a project.") + "\n" +
+		styleOutputEmpty.Render("Or run: canopy project add")
+	return lipgloss.NewStyle().Width(m.width).Height(bodyH).Render(content)
+}
+
+func (m Model) renderDetail(width, height int) string {
+	sess := selectedSession(m.items, m.cursor)
+	if sess == nil {
+		return styleOutputEmpty.Width(width).Render(
+			"Select a session to preview output.\nPress n to start a new session.",
+		)
+	}
+
+	title := sess.Title
+	if title == "" {
+		title = sess.CWD
+	}
+	age := time.Since(sess.StartedAt).Round(time.Second)
+
+	lines := []string{
+		"",
+		lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(title),
+		"",
+		lipgloss.NewStyle().PaddingLeft(2).Render(stateDot(sess.State) + "  " + stateLabel(sess.State)),
+		"",
+		styleOutputEmpty.Render("tool     " + sess.Tool),
+		styleOutputEmpty.Render("started  " + age.String() + " ago"),
+		styleOutputEmpty.Render("cwd      " + sess.CWD),
+		"",
+		styleOutputEmpty.Render("press enter to attach"),
+	}
+	_ = height
+	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }
 
 // --- helpers ---
@@ -338,7 +483,21 @@ func (m *Model) rebuildViewport() {
 	m.viewport.SetContent(m.output)
 }
 
-func (m *Model) selectedWorktreeCWD() string {
+// panelSize returns the (rows, cols) of the right panel in terminal cells.
+func (m *Model) panelSize() (uint16, uint16) {
+	bodyH := m.height - headerHeight - footerHeight
+	leftW := int(float64(m.width) * leftPanelRatio)
+	rightW := m.width - leftW - 1
+	if rightW < 10 {
+		rightW = 10
+	}
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return uint16(bodyH), uint16(rightW)
+}
+
+func (m *Model) selectedCWD() string {
 	if m.cursor < 0 || m.cursor >= len(m.items) {
 		return ""
 	}
@@ -350,16 +509,6 @@ func (m *Model) selectedWorktreeCWD() string {
 		return item.session.CWD
 	}
 	return ""
-}
-
-func isDaemonDown(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return strings.Contains(s, "connection refused") ||
-		strings.Contains(s, "no such file") ||
-		strings.Contains(s, "connect:")
 }
 
 func executablePath() string {
@@ -378,13 +527,16 @@ func tickCmd() tea.Cmd {
 	})
 }
 
-func fetchDataCmd(sockPath string) tea.Cmd {
+func fastTickCmd() tea.Cmd {
+	return tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg {
+		return fastTickMsg(t)
+	})
+}
+
+func fetchDataCmd(dbPath string) tea.Cmd {
 	return func() tea.Msg {
-		data, err := fetchAll(sockPath)
+		data, err := fetchAll(dbPath)
 		if err != nil {
-			if isDaemonDown(err) {
-				return daemonDownMsg{}
-			}
 			return errMsg(err.Error())
 		}
 		return dataMsg(data)
@@ -395,16 +547,70 @@ func fetchSnapshotCmd(sockPath, sessionID string) tea.Cmd {
 	return func() tea.Msg {
 		text, err := fetchSnapshot(sockPath, sessionID)
 		if err != nil {
+			if isDaemonDown(err) {
+				return daemonDownMsg{}
+			}
 			return snapshotMsg("")
 		}
 		return snapshotMsg(text)
 	}
 }
 
-func killSessionCmd(sockPath, sessionID string) tea.Cmd {
+
+func resizeSessionCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
+	return func() tea.Msg {
+		p, _ := json.Marshal(protocol.ResizeSessionParams{SessionID: sessionID, Rows: rows, Cols: cols})
+		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdResizeSession, Payload: p})
+		return nil
+	}
+}
+
+func createSessionCmd(sockPath, cwd string, rows, cols uint16) tea.Cmd {
+	return func() tea.Msg {
+		p, _ := json.Marshal(protocol.NewSessionParams{
+			Tool: "claude",
+			CWD:  cwd,
+			Rows: rows,
+			Cols: cols,
+		})
+		raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdNewSession, Payload: p})
+		if err != nil {
+			if isDaemonDown(err) {
+				return daemonDownMsg{}
+			}
+			return errMsg(err.Error())
+		}
+		var sess protocol.Session
+		if err := json.Unmarshal(raw, &sess); err != nil {
+			return errMsg("parse session: " + err.Error())
+		}
+		return sessionCreatedMsg(sess.ID)
+	}
+}
+
+func sendInputCmd(sockPath, sessionID string, data []byte) tea.Cmd {
+	return func() tea.Msg {
+		p, _ := json.Marshal(protocol.InputParams{SessionID: sessionID, Data: data})
+		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdInput, Payload: p})
+		return nil
+	}
+}
+
+func killSessionCmd(sockPath, dbPath, sessionID string, pid int) tea.Cmd {
 	return func() tea.Msg {
 		p, _ := json.Marshal(protocol.KillSessionParams{SessionID: sessionID})
 		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdKillSession, Payload: p})
-		return fetchDataCmd(sockPath)()
+
+		// Also clean up in DB in case daemon wasn't tracking it.
+		db, err := store.Open(dbPath)
+		if err == nil {
+			defer db.Close()
+			if sess, err := db.GetSession(sessionID); err == nil {
+				sess.State = protocol.StateTerminated
+				sess.Archived = true
+				_ = db.UpdateSession(sess)
+			}
+		}
+		return fetchDataCmd(dbPath)()
 	}
 }

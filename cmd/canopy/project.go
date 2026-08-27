@@ -1,12 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 
+	"github.com/sharathk-dev/canopy/internal/datadir"
+	"github.com/sharathk-dev/canopy/internal/git"
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -35,46 +38,58 @@ func init() {
 }
 
 func runProjectAdd(_ *cobra.Command, args []string) error {
-	repoPath := "."
+	repoPath, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	if len(args) > 0 {
 		repoPath = args[0]
 	}
 
-	abs, err := os.Getwd()
+	root, err := git.RepoRoot(repoPath)
 	if err != nil {
-		return err
-	}
-	if repoPath == "." {
-		repoPath = abs
+		return fmt.Errorf("not a git repo: %w", err)
 	}
 
-	params := protocol.RegisterProjectParams{RepoPath: repoPath}
-	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdRegisterProject, Payload: raw}
-
-	resp, err := sendCmd(cmd)
+	db, err := store.Open(datadir.DBPath())
 	if err != nil {
-		return err
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer db.Close()
+
+	// Idempotent: skip if already registered.
+	projects, _ := db.ListProjects()
+	for _, p := range projects {
+		if p.RepoPath == root {
+			fmt.Printf("already registered: %s (%s)\n", p.Name, p.RepoPath)
+			return nil
+		}
 	}
 
-	var proj protocol.Project
-	if err := json.Unmarshal(resp.Data, &proj); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	proj := protocol.Project{
+		ID:       protocol.NewID(),
+		RepoPath: root,
+		Name:     filepath.Base(root),
 	}
+	if err := db.UpsertProject(proj); err != nil {
+		return fmt.Errorf("save project: %w", err)
+	}
+
+	seedWorktrees(db, root)
 	fmt.Printf("project registered: %s (%s)\n", proj.Name, proj.RepoPath)
 	return nil
 }
 
 func runProjectList(_ *cobra.Command, _ []string) error {
-	cmd := protocol.Cmd{Type: protocol.CmdListProjects}
-	resp, err := sendCmd(cmd)
+	db, err := store.Open(datadir.DBPath())
 	if err != nil {
-		return err
+		return fmt.Errorf("open store: %w", err)
 	}
+	defer db.Close()
 
-	var projects []protocol.Project
-	if err := json.Unmarshal(resp.Data, &projects); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	projects, err := db.ListProjects()
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
 	}
 	if len(projects) == 0 {
 		fmt.Println("no projects registered (run: canopy project add)")
@@ -87,4 +102,21 @@ func runProjectList(_ *cobra.Command, _ []string) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\n", p.ID, p.Name, p.RepoPath)
 	}
 	return w.Flush()
+}
+
+// seedWorktrees upserts all current git worktrees for repoPath into the DB.
+func seedWorktrees(db *store.Store, repoPath string) {
+	wts, err := git.ListWorktrees(repoPath)
+	if err != nil {
+		return
+	}
+	for _, wt := range wts {
+		_ = db.UpsertWorktree(protocol.Worktree{
+			ID:       protocol.NewID(),
+			RepoPath: repoPath,
+			Path:     wt.Path,
+			Branch:   wt.Branch,
+			IsMain:   wt.IsMain,
+		})
+	}
 }

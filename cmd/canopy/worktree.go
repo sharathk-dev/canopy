@@ -1,12 +1,16 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
+	"github.com/sharathk-dev/canopy/internal/datadir"
+	"github.com/sharathk-dev/canopy/internal/git"
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -46,11 +50,18 @@ func init() {
 	worktreeAddCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
 	worktreeAddCmd.Flags().StringVar(&flagWorktreePath, "path", "", "Worktree path (default: sibling dir named after branch)")
 	worktreeRemoveCmd.Flags().StringVar(&flagWorktreeRepo, "repo", "", "Repo path (default: current directory)")
-	worktreeRemoveCmd.Flags().BoolVar(&flagWorktreeForce, "force", false, "Remove even if worktree has uncommitted changes")
+	worktreeRemoveCmd.Flags().BoolVar(&flagWorktreeForce, "force", false, "Remove even with uncommitted changes")
 
 	worktreeCmd.AddCommand(worktreeListCmd)
 	worktreeCmd.AddCommand(worktreeAddCmd)
 	worktreeCmd.AddCommand(worktreeRemoveCmd)
+}
+
+func resolveRepo(flagVal string) (string, error) {
+	if flagVal != "" {
+		return flagVal, nil
+	}
+	return os.Getwd()
 }
 
 func runWorktreeList(_ *cobra.Command, _ []string) error {
@@ -58,17 +69,20 @@ func runWorktreeList(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-
-	raw, _ := json.Marshal(map[string]string{"repo_path": repoPath})
-	cmd := protocol.Cmd{Type: protocol.CmdListWorktrees, Payload: raw}
-	resp, err := sendCmd(cmd)
+	root, err := git.RepoRoot(repoPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("not a git repo: %w", err)
 	}
 
-	var worktrees []protocol.Worktree
-	if err := json.Unmarshal(resp.Data, &worktrees); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	db, err := store.Open(datadir.DBPath())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer db.Close()
+
+	worktrees, err := db.ListWorktreesByRepo(root)
+	if err != nil {
+		return fmt.Errorf("list worktrees: %w", err)
 	}
 	if len(worktrees) == 0 {
 		fmt.Println("no worktrees found (register first: canopy project add)")
@@ -93,23 +107,37 @@ func runWorktreeAdd(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	params := protocol.AddWorktreeParams{
-		RepoPath: repoPath,
-		Branch:   branch,
-		Path:     flagWorktreePath,
-	}
-	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdAddWorktree, Payload: raw}
-	resp, err := sendCmd(cmd)
+	root, err := git.RepoRoot(repoPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("not a git repo: %w", err)
 	}
 
-	var wt protocol.Worktree
-	if err := json.Unmarshal(resp.Data, &wt); err != nil {
-		return fmt.Errorf("decode response: %w", err)
+	path := flagWorktreePath
+	if path == "" {
+		safeBranch := strings.ReplaceAll(branch, "/", "-")
+		path = filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+safeBranch)
 	}
+
+	if err := git.AddWorktree(root, path, branch); err != nil {
+		return fmt.Errorf("git add worktree: %w", err)
+	}
+
+	db, err := store.Open(datadir.DBPath())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer db.Close()
+
+	wt := protocol.Worktree{
+		ID:       protocol.NewID(),
+		RepoPath: root,
+		Path:     path,
+		Branch:   branch,
+	}
+	if err := db.UpsertWorktree(wt); err != nil {
+		return fmt.Errorf("save worktree: %w", err)
+	}
+
 	fmt.Printf("worktree created: %s\n  branch: %s\n  path:   %s\n", wt.ID, wt.Branch, wt.Path)
 	return nil
 }
@@ -120,28 +148,35 @@ func runWorktreeRemove(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	params := protocol.RemoveWorktreeParams{
-		RepoPath: repoPath,
-		Path:     path,
-		Force:    flagWorktreeForce,
-	}
-	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdRemoveWorktree, Payload: raw}
-	resp, err := sendCmd(cmd)
+	root, err := git.RepoRoot(repoPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("not a git repo: %w", err)
 	}
-	if !resp.OK {
-		return fmt.Errorf("%s", resp.Error)
+
+	if !flagWorktreeForce {
+		dirty, err := git.IsDirty(path)
+		if err != nil {
+			return fmt.Errorf("check dirty status: %w", err)
+		}
+		if dirty {
+			return fmt.Errorf("worktree has uncommitted changes; use --force to override")
+		}
 	}
+
+	if err := git.RemoveWorktree(root, path, flagWorktreeForce); err != nil {
+		return fmt.Errorf("git remove worktree: %w", err)
+	}
+
+	db, err := store.Open(datadir.DBPath())
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer db.Close()
+
+	if wt, err := db.GetWorktreeByPath(path); err == nil {
+		_ = db.DeleteWorktree(wt.ID)
+	}
+
 	fmt.Printf("worktree removed: %s\n", path)
 	return nil
-}
-
-func resolveRepo(flagVal string) (string, error) {
-	if flagVal != "" {
-		return flagVal, nil
-	}
-	return os.Getwd()
 }

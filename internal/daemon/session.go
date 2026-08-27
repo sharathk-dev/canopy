@@ -1,10 +1,10 @@
 package daemon
 
 import (
-	"bufio"
-	"log"
+	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,70 +15,53 @@ import (
 	"github.com/sharathk-dev/canopy/internal/store"
 )
 
-const subChanSize = 256
-
-// sessionProc is the daemon's live handle on one running PTY process.
 type sessionProc struct {
 	id        string
-	hookToken string // bearer token for Claude hook authentication
-
-	ptmx *os.File       // PTY master
-	term vt10x.Terminal // terminal emulator for scrollback
-	mu   sync.Mutex     // protects term + subs
-
-	// subs maps client-id → outbound channel of raw PTY bytes.
-	// Channels are non-blocking: frames are dropped when full rather than blocking the reader.
-	subs map[string]chan []byte
-
-	done    chan struct{} // closed when the process exits
-	exitErr error
+	hookToken string
+	ptmx      *os.File
+	term      vt10x.Terminal
+	mu        sync.Mutex
+	subs      map[string]chan []byte
+	done      chan struct{}
+	exitErr   error
 }
 
-// startSession spawns the agent binary in a PTY, registers it in the store,
-// and injects lifecycle hooks if the tool supports them.
 func startSession(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector) (*sessionProc, error) {
-	var args []string
-	switch params.Tool {
-	case "claude":
-		args = []string{"claude"}
-	case "codex":
-		args = []string{"codex"}
-	default:
-		args = []string{os.Getenv("SHELL")}
-		if args[0] == "" {
-			args = []string{"/bin/bash"}
-		}
-	}
+	hookToken := protocol.NewID()
 
-	cmd := exec.Command(args[0], args[1:]...)
+	cmd := exec.Command(params.Tool)
 	cmd.Dir = params.CWD
-	if cmd.Dir == "" {
-		cmd.Dir, _ = os.Getwd()
-	}
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return nil, err
 	}
 
+	rows, cols := uint16(24), uint16(80)
+	if params.Rows > 0 {
+		rows = params.Rows
+	}
+	if params.Cols > 0 {
+		cols = params.Cols
+	}
+	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+
 	proc := &sessionProc{
 		id:        protocol.NewID(),
-		hookToken: protocol.NewID(), // unique bearer token for this session's hooks
+		hookToken: hookToken,
 		ptmx:      ptmx,
+		term:      vt10x.New(vt10x.WithSize(int(cols), int(rows))),
 		subs:      make(map[string]chan []byte),
 		done:      make(chan struct{}),
-		// vt10x.New takes (cols, rows); default 80×24 until the client sends a resize.
-		term: vt10x.New(vt10x.WithSize(80, 24)),
 	}
 
 	sess := protocol.Session{
 		ID:         proc.id,
 		WorktreeID: params.WorktreeID,
-		Kind:       "agent",
 		Tool:       params.Tool,
-		CWD:        cmd.Dir,
+		CWD:        params.CWD,
 		State:      protocol.StateRunning,
+		PID:        cmd.Process.Pid,
 		StartedAt:  time.Now(),
 	}
 	if err := db.CreateSession(sess); err != nil {
@@ -86,120 +69,186 @@ func startSession(params protocol.NewSessionParams, db *store.Store, injector ho
 		return nil, err
 	}
 
-	// Inject lifecycle hooks so Claude reports state transitions to the daemon.
-	if injector != nil {
-		if err := injector.Inject(proc.id, cmd.Dir, proc.hookToken); err != nil {
-			// Non-fatal: hooks are best-effort; the session still runs.
-			log.Printf("hook inject %s: %v", proc.id, err)
-		}
-	}
+	_ = injector.Inject(proc.id, params.CWD, hookToken)
 
-	go proc.readLoop(cmd, db)
+	go proc.readLoop()
+	go proc.waitLoop(cmd, db, injector)
+
 	return proc, nil
 }
 
-// readLoop reads from the PTY master, feeds vt10x, and fans out to subscribers.
-func (p *sessionProc) readLoop(cmd *exec.Cmd, db *store.Store) {
-	defer close(p.done)
+func (s *sessionProc) readLoop() {
+	defer func() {
+		s.mu.Lock()
+		for _, ch := range s.subs {
+			close(ch)
+		}
+		s.subs = make(map[string]chan []byte)
+		s.mu.Unlock()
+		close(s.done)
+	}()
 
-	// Feed the PTY through a bufio.Reader so vt10x.Terminal.Parse can use it.
-	br := bufio.NewReader(p.ptmx)
+	buf := make([]byte, 4096)
 	for {
-		// Parse consumes one "frame" of terminal sequences from the reader.
-		// It blocks until data is available and releases the lock when the buffer empties.
-		if err := p.term.Parse(br); err != nil {
+		n, err := s.ptmx.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			s.mu.Lock()
+			_, _ = s.term.Write(chunk)
+			for _, ch := range s.subs {
+				select {
+				case ch <- chunk:
+				default:
+				}
+			}
+			s.mu.Unlock()
+		}
+		if err != nil {
 			break
 		}
-
-		// Snapshot the updated screen as text and fan out to subscribers.
-		snap := []byte(p.term.String())
-		p.mu.Lock()
-		for _, ch := range p.subs {
-			select {
-			case ch <- snap:
-			default: // drop rather than block
-			}
-		}
-		p.mu.Unlock()
 	}
-
-	p.ptmx.Close()
-	p.exitErr = cmd.Wait()
-
-	state := protocol.StateFinished
-	if p.exitErr != nil {
-		state = protocol.StateTerminated
-	}
-
-	sess, err := db.GetSession(p.id)
-	if err == nil {
-		sess.State = state
-		db.UpdateSession(sess) //nolint:errcheck
-	}
-
-	// Drain subscriber channels so clients see the connection close.
-	p.mu.Lock()
-	for _, ch := range p.subs {
-		close(ch)
-	}
-	p.subs = make(map[string]chan []byte)
-	p.mu.Unlock()
 }
 
-// attach registers a subscriber. Returns the output channel and a snapshot of
-// the current terminal screen as raw bytes (for immediate display on attach).
-func (p *sessionProc) attach(clientID string) (<-chan []byte, []byte) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (s *sessionProc) waitLoop(cmd *exec.Cmd, db *store.Store, injector hooks.Injector) {
+	err := cmd.Wait()
+	s.exitErr = err
+	s.ptmx.Close() // causes readLoop to exit
 
-	ch := make(chan []byte, subChanSize)
-	p.subs[clientID] = ch
+	<-s.done // wait for readLoop to finish and close all subs
 
-	// Capture the current screen state so the client sees what's on screen now.
-	snap := []byte(p.term.String())
+	sess, dbErr := db.GetSession(s.id)
+	if dbErr == nil {
+		if err != nil {
+			sess.State = protocol.StateTerminated
+		} else {
+			sess.State = protocol.StateFinished
+		}
+		sess.Archived = true
+		_ = db.UpdateSession(sess)
+		if ci, ok := injector.(hooks.ClaudeInjector); ok {
+			_ = ci.RemoveFromCWD(s.id, sess.CWD)
+		}
+	}
+}
+
+func (s *sessionProc) attach(clientID string) (<-chan []byte, []byte) {
+	ch := make(chan []byte, 256)
+	s.mu.Lock()
+	s.subs[clientID] = ch
+	snap := []byte(s.term.String())
+	s.mu.Unlock()
 	return ch, snap
 }
 
-// detach removes a subscriber.
-func (p *sessionProc) detach(clientID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	delete(p.subs, clientID)
+func (s *sessionProc) detach(clientID string) {
+	s.mu.Lock()
+	delete(s.subs, clientID)
+	s.mu.Unlock()
 }
 
-// sendInput writes bytes to the PTY master (i.e., the stdin of the child process).
-func (p *sessionProc) sendInput(data []byte) error {
-	_, err := p.ptmx.Write(data)
+func (s *sessionProc) sendInput(data []byte) error {
+	_, err := s.ptmx.Write(data)
 	return err
 }
 
-// resize propagates a terminal resize to the PTY.
-func (p *sessionProc) resize(rows, cols uint16) error {
-	p.mu.Lock()
-	// vt10x.Resize takes (cols, rows).
-	p.term.Resize(int(cols), int(rows))
-	p.mu.Unlock()
-	return pty.Setsize(p.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+func (s *sessionProc) resize(rows, cols uint16) error {
+	return pty.Setsize(s.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
 }
 
-// kill closes the PTY master, which sends SIGHUP to the child.
-func (p *sessionProc) kill() {
-	p.ptmx.Close()
+func (s *sessionProc) kill() {
+	s.ptmx.Close()
 }
 
-// snapshot returns the current terminal screen as a plain-text string.
-func (p *sessionProc) snapshot() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.term.String()
+func (s *sessionProc) snapshot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return renderTermANSI(s.term)
 }
 
-// isDone reports whether the process has exited.
-func (p *sessionProc) isDone() bool {
-	select {
-	case <-p.done:
-		return true
+// renderTermANSI converts the vt10x cell grid back to ANSI-colored text so
+// that styled content (status bars, colors) is visible in the right panel.
+func renderTermANSI(term vt10x.Terminal) string {
+	cols, rows := term.Size()
+	var sb strings.Builder
+
+	for y := 0; y < rows; y++ {
+		if y > 0 {
+			sb.WriteString("\x1b[0m\n")
+		}
+
+		var curFG, curBG vt10x.Color = vt10x.DefaultFG, vt10x.DefaultBG
+		var curMode int16 = 0
+
+		for x := 0; x < cols; x++ {
+			g := term.Cell(x, y)
+
+			fg, bg := g.FG, g.BG
+			// Honour reverse-video: swap fg/bg for rendering.
+			if g.Mode&attrReverse != 0 {
+				fg, bg = bg, fg
+			}
+
+			if fg != curFG || bg != curBG || g.Mode != curMode {
+				sb.WriteString("\x1b[0m")
+				if g.Mode&attrBold != 0 {
+					sb.WriteString("\x1b[1m")
+				}
+				if g.Mode&attrItalic != 0 {
+					sb.WriteString("\x1b[3m")
+				}
+				if g.Mode&attrUnderline != 0 {
+					sb.WriteString("\x1b[4m")
+				}
+				sb.WriteString(ansiColor(fg, true))
+				sb.WriteString(ansiColor(bg, false))
+				curFG, curBG, curMode = fg, bg, g.Mode
+			}
+
+			ch := g.Char
+			if ch == 0 {
+				ch = ' '
+			}
+			sb.WriteRune(ch)
+		}
+	}
+	sb.WriteString("\x1b[0m")
+	return sb.String()
+}
+
+// Glyph mode bit positions (matches vt10x internal constants).
+const (
+	attrReverse   int16 = 1 << 0
+	attrUnderline int16 = 1 << 1
+	attrBold      int16 = 1 << 2
+	attrItalic    int16 = 1 << 4
+)
+
+func ansiColor(c vt10x.Color, fg bool) string {
+	base, hi, reset := 30, 90, 39
+	if !fg {
+		base, hi, reset = 40, 100, 49
+	}
+	switch {
+	case c == vt10x.DefaultFG && fg, c == vt10x.DefaultBG && !fg:
+		return fmt.Sprintf("\x1b[%dm", reset)
+	case uint32(c) < 8:
+		return fmt.Sprintf("\x1b[%dm", base+int(c))
+	case uint32(c) < 16:
+		return fmt.Sprintf("\x1b[%dm", hi+int(c)-8)
+	case uint32(c) < 256:
+		code := 38
+		if !fg {
+			code = 48
+		}
+		return fmt.Sprintf("\x1b[%d;5;%dm", code, uint32(c))
 	default:
-		return false
+		// 24-bit truecolor encoded as r<<16|g<<8|b.
+		v := uint32(c)
+		code := 38
+		if !fg {
+			code = 48
+		}
+		return fmt.Sprintf("\x1b[%d;2;%d;%d;%dm", code, (v>>16)&0xFF, (v>>8)&0xFF, v&0xFF)
 	}
 }

@@ -2,18 +2,21 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
+	"strings"
+	"unicode/utf8"
 
+	"github.com/sharathk-dev/canopy/internal/datadir"
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/spf13/cobra"
 )
 
 var hookCmd = &cobra.Command{
 	Use:    "_hook",
 	Hidden: true,
-	Short:  "Internal: relay a Claude lifecycle hook event to the daemon",
+	Short:  "Internal: handle a Claude lifecycle hook event",
 	RunE:   runHook,
 }
 
@@ -25,42 +28,80 @@ var (
 
 func init() {
 	hookCmd.Flags().StringVar(&flagHookSession, "session", "", "Session ID")
-	hookCmd.Flags().StringVar(&flagHookToken, "token", "", "Hook bearer token")
+	hookCmd.Flags().StringVar(&flagHookToken, "token", "", "Hook token")
 	hookCmd.Flags().StringVar(&flagHookEvent, "event", "", "Hook event type")
 	rootCmd.AddCommand(hookCmd)
 }
 
 func runHook(_ *cobra.Command, _ []string) error {
-	if flagHookSession == "" || flagHookToken == "" || flagHookEvent == "" {
-		return fmt.Errorf("--session, --token, and --event are required")
-	}
-
-	// Read hook payload from stdin (Claude passes event data as JSON).
-	stdin, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		return fmt.Errorf("read stdin: %w", err)
-	}
-
-	var data json.RawMessage
-	if len(stdin) > 0 && json.Valid(stdin) {
-		data = json.RawMessage(stdin)
-	}
-
-	params := protocol.HookEventParams{
-		SessionID: flagHookSession,
-		Token:     flagHookToken,
-		EventType: flagHookEvent,
-		Data:      data,
-	}
-	raw, _ := json.Marshal(params)
-	cmd := protocol.Cmd{Type: protocol.CmdHookEvent, Payload: raw}
-
-	// Best-effort: if the daemon isn't running just exit cleanly.
-	resp, err := sendCmd(cmd)
-	if err != nil {
-		// Don't surface errors to Claude — hook failures should be silent.
+	if flagHookSession == "" || flagHookEvent == "" {
 		return nil
 	}
-	_ = resp
+
+	stdin, _ := io.ReadAll(os.Stdin)
+	var data json.RawMessage
+	if len(stdin) > 0 && json.Valid(stdin) {
+		data = stdin
+	}
+
+	db, err := store.Open(datadir.DBPath())
+	if err != nil {
+		return nil // best-effort, silent
+	}
+	defer db.Close()
+
+	sess, err := db.GetSession(flagHookSession)
+	if err != nil {
+		return nil
+	}
+
+	changed := false
+
+	if flagHookEvent == "UserPromptSubmit" && !sess.TitleLocked && sess.Title == "" {
+		if title := extractHookTitle(data); title != "" {
+			sess.Title = title
+			changed = true
+		}
+	}
+
+	if newState := hookStateTransition(flagHookEvent); newState != "" && sess.State != newState {
+		sess.State = newState
+		changed = true
+	}
+
+	if changed {
+		_ = db.UpdateSession(sess)
+	}
 	return nil
+}
+
+func hookStateTransition(event string) string {
+	switch event {
+	case "PreToolUse", "PostToolUse", "UserPromptSubmit":
+		return protocol.StateRunning
+	case "Stop":
+		return protocol.StateNeedsInput
+	default:
+		return ""
+	}
+}
+
+func extractHookTitle(data json.RawMessage) string {
+	if len(data) == 0 {
+		return ""
+	}
+	var payload struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil || payload.Prompt == "" {
+		return ""
+	}
+	return hookTruncate(strings.TrimSpace(payload.Prompt), 60)
+}
+
+func hookTruncate(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
 }

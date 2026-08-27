@@ -72,8 +72,7 @@ var (
 			Foreground(colorBorder)
 
 	styleOutput = lipgloss.NewStyle().
-			Foreground(colorText).
-			PaddingLeft(1)
+			Foreground(colorText)
 
 	styleOutputEmpty = lipgloss.NewStyle().
 				Foreground(colorDim).

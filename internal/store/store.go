@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 	title_locked    INTEGER NOT NULL DEFAULT 0,
 	state           TEXT NOT NULL,
 	archived        INTEGER NOT NULL DEFAULT 0,
+	pid             INTEGER NOT NULL DEFAULT 0,
 	started_at      DATETIME NOT NULL
 );
 `
@@ -57,6 +58,8 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Migration: add pid column to existing databases.
+	_, _ = db.Exec(`ALTER TABLE sessions ADD COLUMN pid INTEGER NOT NULL DEFAULT 0`)
 	return &Store{db: db}, nil
 }
 
@@ -193,11 +196,11 @@ func (s *Store) GetWorktreeByPathPrefix(dir string) (protocol.Worktree, error) {
 
 func (s *Store) CreateSession(sess protocol.Session) error {
 	_, err := s.db.Exec(
-		`INSERT INTO sessions(id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,started_at)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO sessions(id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,pid,started_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sess.ID, sess.WorktreeID, sess.Kind, sess.Tool, sess.CWD,
 		sess.CLISessionID, sess.Title, boolInt(sess.TitleLocked),
-		sess.State, boolInt(sess.Archived), sess.StartedAt.UTC(),
+		sess.State, boolInt(sess.Archived), sess.PID, sess.StartedAt.UTC(),
 	)
 	return err
 }
@@ -205,24 +208,24 @@ func (s *Store) CreateSession(sess protocol.Session) error {
 func (s *Store) UpdateSession(sess protocol.Session) error {
 	_, err := s.db.Exec(
 		`UPDATE sessions SET worktree_id=?,kind=?,tool=?,cwd=?,cli_session_id=?,title=?,
-		 title_locked=?,state=?,archived=? WHERE id=?`,
+		 title_locked=?,state=?,archived=?,pid=? WHERE id=?`,
 		sess.WorktreeID, sess.Kind, sess.Tool, sess.CWD,
 		sess.CLISessionID, sess.Title, boolInt(sess.TitleLocked),
-		sess.State, boolInt(sess.Archived), sess.ID,
+		sess.State, boolInt(sess.Archived), sess.PID, sess.ID,
 	)
 	return err
 }
 
 func (s *Store) GetSession(id string) (protocol.Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,started_at
+		`SELECT id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,pid,started_at
 		 FROM sessions WHERE id=?`, id)
 	return scanSession(row)
 }
 
 func (s *Store) ListSessions() ([]protocol.Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,started_at
+		`SELECT id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,pid,started_at
 		 FROM sessions ORDER BY started_at DESC`)
 	if err != nil {
 		return nil, err
@@ -233,7 +236,7 @@ func (s *Store) ListSessions() ([]protocol.Session, error) {
 
 func (s *Store) ListActiveSessions() ([]protocol.Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,started_at
+		`SELECT id,worktree_id,kind,tool,cwd,cli_session_id,title,title_locked,state,archived,pid,started_at
 		 FROM sessions WHERE archived=0 AND state NOT IN ('finished','terminated')
 		 ORDER BY started_at DESC`)
 	if err != nil {
@@ -255,7 +258,7 @@ func scanSession(row scanner) (protocol.Session, error) {
 	var startedAt string
 	err := row.Scan(
 		&sess.ID, &sess.WorktreeID, &sess.Kind, &sess.Tool, &sess.CWD,
-		&sess.CLISessionID, &sess.Title, &titleLocked, &sess.State, &archived, &startedAt,
+		&sess.CLISessionID, &sess.Title, &titleLocked, &sess.State, &archived, &sess.PID, &startedAt,
 	)
 	if err != nil {
 		return sess, err
