@@ -132,6 +132,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildItems()
 		m.clampCursor()
+		if selectedSession(m.items, m.cursor) == nil {
+			m.output = ""
+			m.viewport.SetContent("")
+		}
 		if m.jumpToSession {
 			if idx := firstSessionIndex(m.items); idx >= 0 {
 				m.cursor = idx
@@ -522,7 +526,7 @@ func (m Model) renderDetail(width, height int) string {
 	sess := selectedSession(m.items, m.cursor)
 	if sess == nil {
 		return styleOutputEmpty.Width(width).Render(
-			"Select a session to preview output.\nPress n to start a new session.",
+			"No active session.\nPress n to start a new session.",
 		)
 	}
 
