@@ -58,6 +58,7 @@ type Model struct {
 	projectDeleteID    string
 	projectDeleteName  string
 	projectDeleteInput string
+	showHelp           bool
 	daemonDown         bool
 	err                string
 }
@@ -187,6 +188,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if m.showHelp {
+		switch msg.String() {
+		case "esc", "?", "q":
+			m.showHelp = false
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	if m.projectDeleteID != "" {
 		switch msg.String() {
 		case "enter":
@@ -309,6 +318,9 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+
+	case "?":
+		m.showHelp = true
 
 	case "tab":
 		if !m.rightFocused {
@@ -453,6 +465,9 @@ func (m Model) View() string {
 	if m.err != "" {
 		return fmt.Sprintf("Error: %s\nPress q to quit.\n", m.err)
 	}
+	if m.showHelp {
+		return m.renderHelp()
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.renderHeader(),
@@ -525,6 +540,7 @@ func (m Model) renderFooter() string {
 	} else if len(m.projects) == 0 {
 		hints = []string{
 			styleFooterKey.Render("a") + " add project",
+			styleFooterKey.Render("?") + " help",
 			styleFooterKey.Render("q") + " quit",
 		}
 	} else {
@@ -535,13 +551,55 @@ func (m Model) renderFooter() string {
 		hints = []string{
 			styleFooterKey.Render("enter") + " expand/attach",
 			styleFooterKey.Render("n") + " new session",
-			styleFooterKey.Render("a") + " add project",
-			styleFooterKey.Render("x") + " kill",
 			paneHint,
+			styleFooterKey.Render("?") + " help",
 			styleFooterKey.Render("q") + " quit",
 		}
 	}
 	return styleFooter.Width(m.width).Render(strings.Join(hints, "   "))
+}
+
+func (m Model) renderHelp() string {
+	bodyH := m.height - headerHeight - footerHeight
+	if bodyH < 1 {
+		bodyH = 1
+	}
+
+	section := lipgloss.NewStyle().Foreground(colorText).Bold(true)
+	key := lipgloss.NewStyle().Foreground(colorText).Bold(true)
+	muted := styleOutputEmpty.PaddingLeft(0).PaddingTop(0)
+	lines := []string{
+		"",
+		section.Render("Navigation"),
+		"",
+		key.Render("j / ↓") + "       move down",
+		key.Render("k / ↑") + "       move up",
+		key.Render("enter") + "       expand or attach",
+		key.Render("tab") + "         switch pane",
+		key.Render("?") + "            show shortcuts",
+		"",
+		section.Render("Projects and worktrees"),
+		"",
+		key.Render("a") + "            add project",
+		key.Render("w") + "            add worktree",
+		key.Render("x") + "            remove selected project or worktree",
+		"",
+		section.Render("Sessions"),
+		"",
+		key.Render("n") + "            new session",
+		key.Render("e") + "            edit title",
+		key.Render("x") + "            remove selected session",
+		key.Render("ctrl+q") + "       leave attached session",
+		"",
+		muted.Render("esc, ?, or q    close shortcuts"),
+	}
+	content := lipgloss.NewStyle().Width(m.width).Height(bodyH).PaddingLeft(3).Render(strings.Join(lines, "\n"))
+	footer := styleFooter.Width(m.width).Render(key.Render("esc") + " close   " + key.Render("q") + " close")
+	return lipgloss.JoinVertical(lipgloss.Left,
+		styleHeader.Width(m.width).Render("canopy / shortcuts"),
+		content,
+		footer,
+	)
 }
 
 func (m Model) renderBody() string {
