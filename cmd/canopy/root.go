@@ -17,6 +17,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var debugMode bool
+
 var rootCmd = &cobra.Command{
 	Use:   "canopy",
 	Short: "Agent session manager — keep AI agent sessions organised across worktrees",
@@ -30,6 +32,10 @@ var uiCmd = &cobra.Command{
 }
 
 func runUI(_ *cobra.Command, _ []string) error {
+	if debugMode {
+		tui.EnableDebug()
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
@@ -126,6 +132,7 @@ func daemonCurrent(exe string) bool {
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVar(&debugMode, "debug", false, "log all events to /tmp/canopy-debug.log")
 	rootCmd.AddCommand(sessionCmd)
 	rootCmd.AddCommand(worktreeCmd)
 	rootCmd.AddCommand(uiCmd)
