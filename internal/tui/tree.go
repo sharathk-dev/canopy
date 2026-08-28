@@ -231,11 +231,6 @@ func filterTreeItems(items []treeItem, query string) []treeItem {
 			continue
 		}
 
-		if items[i].kind == kindSettings {
-			filtered = append(filtered, items[i])
-			i++
-			continue
-		}
 		if items[i].kind != kindProject {
 			i++
 			continue
