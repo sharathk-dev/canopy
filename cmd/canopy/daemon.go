@@ -12,6 +12,7 @@ import (
 
 	internaldaemon "github.com/sharathk-dev/canopy/internal/daemon"
 	"github.com/sharathk-dev/canopy/internal/datadir"
+	"github.com/sharathk-dev/canopy/internal/dbg"
 	"github.com/sharathk-dev/canopy/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -78,7 +79,11 @@ func runDaemonStart(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	proc, err := os.StartProcess(exe, []string{exe, "daemon", "_run"},
+	args := []string{exe, "daemon", "_run"}
+	if debugMode {
+		args = append(args, "--debug")
+	}
+	proc, err := os.StartProcess(exe, args,
 		&os.ProcAttr{
 			Files: []*os.File{nil, nil, nil},
 			Sys:   &syscall.SysProcAttr{Setsid: true},
@@ -129,6 +134,10 @@ func runDaemonStatus(_ *cobra.Command, _ []string) error {
 }
 
 func runDaemonRun(_ *cobra.Command, _ []string) error {
+	if debugMode {
+		dbg.Enable()
+	}
+
 	pidFile := datadir.PIDPath()
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0644); err != nil {
 		return fmt.Errorf("write pid file: %w", err)

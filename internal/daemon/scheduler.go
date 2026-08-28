@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sharathk-dev/canopy/internal/dbg"
 	"github.com/sharathk-dev/canopy/internal/protocol"
 	"github.com/sharathk-dev/canopy/internal/scheduler"
 )
@@ -33,6 +34,7 @@ func (d *Daemon) runDueSchedules(ctx context.Context, now time.Time) {
 		return
 	}
 	minute := now.Truncate(time.Minute)
+	dbg.Log("SCHED", "tick at %s — checking %d schedules", minute.Format("15:04:05"), len(schedules))
 	for _, schedule := range schedules {
 		if !schedule.Enabled {
 			continue
@@ -46,10 +48,13 @@ func (d *Daemon) runDueSchedules(ctx context.Context, now time.Time) {
 			if _, loaded := d.inFlight.LoadOrStore(schedule.ID, struct{}{}); !loaded {
 				select {
 				case d.scheduleQueue <- schedule:
+					dbg.Log("SCHED", "enqueued %q (id=%s) queue_len=%d", schedule.Name, schedule.ID, len(d.scheduleQueue))
 				default:
-					// Queue full; clear the in-flight marker so a future tick can retry.
 					d.inFlight.Delete(schedule.ID)
+					dbg.Log("SCHED", "dropped %q — queue full (cap=%d)", schedule.Name, cap(d.scheduleQueue))
 				}
+			} else {
+				dbg.Log("SCHED", "skipped %q — already in-flight", schedule.Name)
 			}
 		}
 	}
@@ -61,8 +66,10 @@ func (d *Daemon) scheduleWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case schedule := <-d.scheduleQueue:
+			dbg.Log("SCHED", "worker start %q (id=%s)", schedule.Name, schedule.ID)
 			d.executeSchedule(ctx, schedule)
 			d.inFlight.Delete(schedule.ID)
+			dbg.Log("SCHED", "worker done  %q (id=%s)", schedule.Name, schedule.ID)
 		}
 	}
 }
@@ -109,6 +116,7 @@ func (d *Daemon) executeSchedule(ctx context.Context, schedule protocol.Schedule
 	} else {
 		run.Status = "success"
 	}
+	dbg.Log("SCHED", "run %s status=%s duration=%s", run.ID, run.Status, run.FinishedAt.Sub(run.StartedAt).Round(time.Millisecond))
 	_ = d.db.FinishScheduleRun(run)
 }
 
@@ -145,6 +153,7 @@ func (d *Daemon) handleRunSchedule(conn net.Conn, raw []byte) {
 		d.sendErr(conn, "schedule not found")
 		return
 	}
+	dbg.Log("SCHED", "manual run %q (id=%s)", schedule.Name, schedule.ID)
 	go d.executeSchedule(context.Background(), schedule)
 	d.sendOK(conn, map[string]string{"schedule_id": schedule.ID})
 }

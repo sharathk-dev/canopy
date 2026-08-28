@@ -68,7 +68,11 @@ func runUI(_ *cobra.Command, _ []string) error {
 
 // startDaemonProcess forks the current binary as a detached daemon process.
 func startDaemonProcess(exe string) error {
-	proc, err := os.StartProcess(exe, []string{exe, "daemon", "_run"},
+	args := []string{exe, "daemon", "_run"}
+	if debugMode {
+		args = append(args, "--debug")
+	}
+	proc, err := os.StartProcess(exe, args,
 		&os.ProcAttr{
 			Files: []*os.File{nil, nil, nil},
 			Sys:   &syscall.SysProcAttr{Setsid: true},
