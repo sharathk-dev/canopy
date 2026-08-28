@@ -205,6 +205,61 @@ func selectedSchedule(items []treeItem, cursor int) *protocol.Schedule {
 	return items[cursor].schedule
 }
 
+// filterTreeItems keeps only matching sessions with their parent project/worktree.
+// Schedules are matched by name. Non-matching siblings are excluded.
+func filterTreeItems(items []treeItem, query string) []treeItem {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return items
+	}
+
+	var filtered []treeItem
+	for i := 0; i < len(items); {
+		if items[i].kind == kindSchedule {
+			if strings.Contains(strings.ToLower(items[i].schedule.Name), query) {
+				filtered = append(filtered, items[i])
+			}
+			i++
+			continue
+		}
+
+		if items[i].kind != kindProject {
+			i++
+			continue
+		}
+
+		projectItem := items[i]
+		projectAdded := false
+		i++
+
+		for i < len(items) && items[i].kind != kindProject && items[i].kind != kindSchedule {
+			if items[i].kind != kindWorktree {
+				i++
+				continue
+			}
+			worktreeItem := items[i]
+			worktreeAdded := false
+			i++
+
+			for i < len(items) && items[i].kind == kindSession {
+				if strings.Contains(strings.ToLower(items[i].session.Title), query) {
+					if !projectAdded {
+						filtered = append(filtered, projectItem)
+						projectAdded = true
+					}
+					if !worktreeAdded {
+						filtered = append(filtered, worktreeItem)
+						worktreeAdded = true
+					}
+					filtered = append(filtered, items[i])
+				}
+				i++
+			}
+		}
+	}
+	return filtered
+}
+
 // firstSessionIndex returns the index of the first session item, or -1.
 func firstSessionIndex(items []treeItem) int {
 	for i, item := range items {

@@ -76,6 +76,10 @@ type Model struct {
 	scheduleName        string
 	scheduleCron        string
 	scheduleSkill       string
+	searching           bool
+	searchInput         string
+	searchQuery         string
+	searchPrevious      string
 	showHelp            bool
 	daemonDown          bool
 	status              string
@@ -216,6 +220,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = string(msg)
 
 	case tea.KeyMsg:
+		if m.searching {
+			return m.handleKey(msg, cmds)
+		}
 		if m.sessionLocked {
 			return m.handleLockedKey(msg, cmds)
 		}
@@ -230,6 +237,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
 	if m.showHelp {
 		switch msg.String() {
 		case "esc", "?", "q":
@@ -329,6 +340,63 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			if len(msg.Runes) > 0 {
 				*fields[m.scheduleField] += string(msg.Runes)
 			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	if m.searching {
+		if msg.Type == tea.KeyEscape {
+			m.searchQuery = m.searchPrevious
+			m.searching = false
+			m.searchInput = ""
+			m.rebuildItems()
+			m.clampCursor()
+			return m, tea.Batch(cmds...)
+		}
+		if msg.Type == tea.KeyEnter {
+			selectedKey := treeItemKey(m.items, m.cursor)
+			m.searching = false
+			m.searchInput = ""
+			m.searchQuery = ""
+			m.rebuildItems()
+			m.cursor = findTreeItem(m.items, selectedKey)
+			m.clampCursor()
+			return m, tea.Batch(cmds...)
+		}
+		switch msg.String() {
+		case "enter":
+			selectedKey := treeItemKey(m.items, m.cursor)
+			m.searching = false
+			m.searchInput = ""
+			m.searchQuery = ""
+			m.rebuildItems()
+			m.cursor = findTreeItem(m.items, selectedKey)
+			m.clampCursor()
+		case "esc":
+			m.searchQuery = m.searchPrevious
+			m.searching = false
+			m.searchInput = ""
+			m.rebuildItems()
+			m.clampCursor()
+		case "tab":
+			m.cursor = nextSearchMatch(m.items, m.cursor)
+		case "shift+tab":
+			m.cursor = prevSearchMatch(m.items, m.cursor)
+		case "backspace", "ctrl+h":
+			if len(m.searchInput) > 0 {
+				runes := []rune(m.searchInput)
+				m.searchInput = string(runes[:len(runes)-1])
+			}
+			m.searchQuery = strings.TrimSpace(m.searchInput)
+			m.rebuildItems()
+			m.cursor = searchResultCursor(m.items, m.searchQuery)
+		default:
+			if len(msg.Runes) > 0 {
+				m.searchInput += string(msg.Runes)
+			}
+			m.searchQuery = strings.TrimSpace(m.searchInput)
+			m.rebuildItems()
+			m.cursor = searchResultCursor(m.items, m.searchQuery)
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -481,6 +549,11 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
+
+	case "/":
+		m.searching = true
+		m.searchPrevious = m.searchQuery
+		m.searchInput = m.searchQuery
 
 	case "?":
 		m.showHelp = true
@@ -771,6 +844,14 @@ func (m Model) renderFooter() string {
 			gap = 1
 		}
 		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.searching {
+		left := "search: " + m.searchInput
+		right := styleFooterKey.Render("tab") + " next   " + styleFooterKey.Render("enter") + " select   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 	} else if m.confirmKillID != "" {
 		hints = []string{
 			styleFooterKey.Render("y/enter") + " confirm kill",
@@ -845,6 +926,7 @@ func (m Model) renderHelp() string {
 		key.Render("k / ↑") + "       move up",
 		key.Render("enter") + "       expand or attach",
 		key.Render("tab") + "         switch pane",
+		key.Render("/") + "            search session titles",
 		key.Render("?") + "            show shortcuts",
 		"",
 		section.Render("Projects and worktrees"),
@@ -903,8 +985,13 @@ func (m Model) renderBody() string {
 		titleStyle = stylePanelTitle.Foreground(colorSelected)
 	}
 
-	left := titleStyle.Width(leftW).Render("WORKSPACE") + "\n" +
-		renderTree(m.items, m.cursor, leftW, treeH)
+	var treeContent string
+	if m.searchQuery != "" && len(m.items) == 0 {
+		treeContent = styleOutputEmpty.Render("No results for \"" + m.searchQuery + "\"")
+	} else {
+		treeContent = renderTree(m.items, m.cursor, leftW, treeH)
+	}
+	left := titleStyle.Width(leftW).Render("WORKSPACE") + "\n" + treeContent
 
 	divLines := make([]string, bodyH)
 	for i := range divLines {
@@ -996,6 +1083,80 @@ func (m Model) renderDetail(width, height int) string {
 
 func (m *Model) rebuildItems() {
 	m.items = buildTree(m.schedules, m.projects, m.worktrees, m.sessions, m.expanded)
+	if m.searchQuery != "" {
+		m.items = filterTreeItems(m.items, m.searchQuery)
+	}
+}
+
+func searchResultCursor(items []treeItem, query string) int {
+	if query == "" {
+		return 0
+	}
+	q := strings.ToLower(query)
+	for i, item := range items {
+		if item.kind == kindSession && strings.Contains(strings.ToLower(item.session.Title), q) {
+			return i
+		}
+		if item.kind == kindSchedule && strings.Contains(strings.ToLower(item.schedule.Name), q) {
+			return i
+		}
+	}
+	return 0
+}
+
+func nextSearchMatch(items []treeItem, cursor int) int {
+	for i := cursor + 1; i < len(items); i++ {
+		if items[i].kind == kindSession || items[i].kind == kindSchedule {
+			return i
+		}
+	}
+	for i := 0; i <= cursor; i++ {
+		if items[i].kind == kindSession || items[i].kind == kindSchedule {
+			return i
+		}
+	}
+	return cursor
+}
+
+func prevSearchMatch(items []treeItem, cursor int) int {
+	for i := cursor - 1; i >= 0; i-- {
+		if items[i].kind == kindSession || items[i].kind == kindSchedule {
+			return i
+		}
+	}
+	for i := len(items) - 1; i >= cursor; i-- {
+		if items[i].kind == kindSession || items[i].kind == kindSchedule {
+			return i
+		}
+	}
+	return cursor
+}
+
+func treeItemKey(items []treeItem, index int) string {
+	if index < 0 || index >= len(items) {
+		return ""
+	}
+	item := items[index]
+	switch item.kind {
+	case kindSession:
+		return "session:" + item.session.ID
+	case kindSchedule:
+		return "schedule:" + item.schedule.ID
+	default:
+		return ""
+	}
+}
+
+func findTreeItem(items []treeItem, key string) int {
+	if key == "" {
+		return 0
+	}
+	for i := range items {
+		if treeItemKey(items, i) == key {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m *Model) clampCursor() {
