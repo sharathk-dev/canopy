@@ -870,17 +870,52 @@ func (m Model) renderFooter() string {
 			styleFooterKey.Render("?") + " help",
 			styleFooterKey.Render("q") + " quit",
 		}
-	} else {
-		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
-			paneHint := styleFooterKey.Render("tab") + " → output"
-			if m.rightFocused {
-				paneHint = styleFooterKey.Render("tab") + " → tree"
-			}
+	} else if m.rightFocused {
+		hints = []string{
+			styleFooterKey.Render("tab") + " → tree",
+			styleFooterKey.Render("c") + " copy",
+			styleFooterKey.Render("?") + " help",
+			styleFooterKey.Render("q") + " quit",
+		}
+	} else if m.cursor >= 0 && m.cursor < len(m.items) {
+		item := m.items[m.cursor]
+		switch item.kind {
+		case kindProject:
 			hints = []string{
-				styleFooterKey.Render("r") + " run now",
+				styleFooterKey.Render("enter") + " expand",
+				styleFooterKey.Render("n") + " new session",
+				styleFooterKey.Render("w") + " add worktree",
+				styleFooterKey.Render("x") + " remove",
+				styleFooterKey.Render("/") + " search",
+				styleFooterKey.Render("?") + " help",
+				styleFooterKey.Render("q") + " quit",
+			}
+		case kindWorktree:
+			hints = []string{
+				styleFooterKey.Render("enter") + " expand",
+				styleFooterKey.Render("n") + " new session",
+				styleFooterKey.Render("w") + " add worktree",
+				styleFooterKey.Render("x") + " remove",
+				styleFooterKey.Render("/") + " search",
+				styleFooterKey.Render("?") + " help",
+				styleFooterKey.Render("q") + " quit",
+			}
+		case kindSession:
+			hints = []string{
+				styleFooterKey.Render("enter") + " attach",
+				styleFooterKey.Render("e") + " rename",
+				styleFooterKey.Render("x") + " remove",
+				styleFooterKey.Render("/") + " search",
+				styleFooterKey.Render("tab") + " → output",
+				styleFooterKey.Render("?") + " help",
+				styleFooterKey.Render("q") + " quit",
+			}
+		case kindSchedule:
+			hints = []string{
+				styleFooterKey.Render("r") + " run",
 				styleFooterKey.Render("space") + " enable/disable",
 				styleFooterKey.Render("c") + " copy output",
-				paneHint,
+				styleFooterKey.Render("tab") + " → output",
 				styleFooterKey.Render("?") + " help",
 				styleFooterKey.Render("q") + " quit",
 			}
@@ -894,18 +929,11 @@ func (m Model) renderFooter() string {
 				return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 			}
 			return styleFooter.Width(m.width).Render(left)
-		}
-		paneHint := styleFooterKey.Render("tab") + " → output"
-		if m.rightFocused {
-			paneHint = styleFooterKey.Render("tab") + " → tree"
-		}
-		hints = []string{
-			styleFooterKey.Render("enter") + " expand/attach",
-			styleFooterKey.Render("s") + " schedule",
-			styleFooterKey.Render("n") + " new session",
-			paneHint,
-			styleFooterKey.Render("?") + " help",
-			styleFooterKey.Render("q") + " quit",
+		default: // kindSettings
+			hints = []string{
+				styleFooterKey.Render("?") + " help",
+				styleFooterKey.Render("q") + " quit",
+			}
 		}
 	}
 	return styleFooter.Width(m.width).Render(strings.Join(hints, "   "))
