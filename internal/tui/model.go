@@ -520,6 +520,10 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.cursor = nextSearchMatch(m.items, m.cursor)
 		case "shift+tab":
 			m.cursor = prevSearchMatch(m.items, m.cursor)
+		case "down":
+			m.cursor = nextSearchMatch(m.items, m.cursor)
+		case "up":
+			m.cursor = prevSearchMatch(m.items, m.cursor)
 		case "backspace", "ctrl+h":
 			if len(m.searchInput) > 0 {
 				runes := []rune(m.searchInput)
@@ -1117,13 +1121,12 @@ func (m Model) scheduleFormReady() bool {
 func (m Model) renderFooter() string {
 	var hints []string
 	if m.searching {
-		left := "search: " + m.searchInput
-		right := styleFooterKey.Render("tab") + " next   " + styleFooterKey.Render("enter") + " select   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
+		hints = []string{
+			styleFooterKey.Render("↑↓") + " navigate",
+			styleFooterKey.Render("enter") + " select",
+			styleFooterKey.Render("esc") + " cancel",
 		}
-		return restoreBaseStyle(styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right))
+		return restoreBaseStyle(styleFooter.Width(m.width).Render(strings.Join(hints, "   ")))
 	} else if m.sessionLocked {
 		hints = []string{
 			styleFooterKey.Render("ctrl+q") + " back to tree",
@@ -1318,7 +1321,16 @@ func (m Model) renderBody() string {
 		treeContent = renderTree(m.items, m.cursor, leftInnerW, scrollH)
 	}
 
-	leftContent := titleStyle.Width(leftInnerW).Render("WORKSPACE") + "\n" + treeContent
+	leftHeader := titleStyle.Render("WORKSPACE")
+	if m.searching {
+		searchValue := m.searchInput
+		if searchValue == "" {
+			leftHeader = themed(colorDim).PaddingLeft(1).Render("/█type to search")
+		} else {
+			leftHeader = themed(colorText).PaddingLeft(1).Render("/" + searchValue + "█")
+		}
+	}
+	leftContent := themed(colorText).Width(leftInnerW).Render(leftHeader) + "\n" + treeContent
 	if settingsIdx >= 0 {
 		leftContent += renderTreeItem(treeItem{kind: kindSettings}, m.cursor == settingsIdx, leftInnerW)
 	}
