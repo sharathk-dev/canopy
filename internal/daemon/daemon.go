@@ -341,7 +341,12 @@ func (d *Daemon) handleSessionSnapshot(conn net.Conn, raw json.RawMessage) {
 		return
 	}
 
-	d.sendOK(conn, protocol.SnapshotResponse{Text: proc.snapshot()})
+	text, revision := proc.snapshot()
+	if params.SinceRevision != 0 && params.SinceRevision == revision {
+		d.sendOK(conn, protocol.SnapshotResponse{Revision: revision, Changed: false})
+		return
+	}
+	d.sendOK(conn, protocol.SnapshotResponse{Text: text, Revision: revision, Changed: true})
 }
 
 func (d *Daemon) handleInput(conn net.Conn, raw json.RawMessage) {

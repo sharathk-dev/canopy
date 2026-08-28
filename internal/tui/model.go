@@ -49,6 +49,9 @@ type Model struct {
 	output   string
 	viewport viewport.Model
 
+	snapshotSessionID string
+	snapshotRevision  uint64
+
 	// layout
 	width, height int
 	ready         bool
@@ -150,7 +153,12 @@ type tickMsg time.Time
 type fastTickMsg time.Time
 type animationTickMsg struct{}
 type dataMsg daemonData
-type snapshotMsg string
+type snapshotMsg struct {
+	sessionID string
+	text      string
+	revision  uint64
+	changed   bool
+}
 type sessionCreatedMsg string // session ID
 type errMsg string
 type daemonDownMsg struct{}
@@ -187,14 +195,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		cmds = append(cmds, fetchDataCmd(m.dbPath), tickCmd())
 		if m.sessionLocked {
-			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID), fastTickCmd())
+			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID, m.snapshotRevision), fastTickCmd())
 		} else if sess := selectedSession(m.items, m.cursor); sess != nil {
-			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, sess.ID))
+			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, sess.ID, m.snapshotRevision))
 		}
 
 	case fastTickMsg:
 		if m.sessionLocked {
-			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID), fastTickCmd())
+			cmds = append(cmds, fetchSnapshotCmd(m.sockPath, m.lockedSessionID, m.snapshotRevision), fastTickCmd())
 		}
 
 	case animationTickMsg:
@@ -241,7 +249,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rebuildItems()
 		m.clampCursor()
-		if selectedSession(m.items, m.cursor) == nil {
+		if sess := selectedSession(m.items, m.cursor); sess == nil {
+			m.snapshotSessionID = ""
+			m.snapshotRevision = 0
+			m.output = ""
+			m.viewport.SetContent("")
+		} else if m.snapshotSessionID != sess.ID {
+			m.snapshotSessionID = sess.ID
+			m.snapshotRevision = 0
 			m.output = ""
 			m.viewport.SetContent("")
 		}
@@ -256,12 +271,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionCreatedMsg:
 		m.sessionLocked = true
 		m.lockedSessionID = string(msg)
+		m.snapshotSessionID = string(msg)
+		m.snapshotRevision = 0
+		m.output = ""
+		m.viewport.SetContent("")
 		m.jumpToSession = true
 		cmds = append(cmds, fetchDataCmd(m.dbPath), fastTickCmd())
 
 	case snapshotMsg:
-		if string(msg) != "" {
-			m.output = string(msg)
+		activeID := m.lockedSessionID
+		if activeID == "" {
+			if sess := selectedSession(m.items, m.cursor); sess != nil {
+				activeID = sess.ID
+			}
+		}
+		if msg.sessionID != activeID || !msg.changed {
+			break
+		}
+		m.snapshotSessionID = msg.sessionID
+		m.snapshotRevision = msg.revision
+		if msg.text != "" {
+			m.output = msg.text
 			m.viewport.SetContent(m.output)
 		}
 
@@ -955,12 +985,18 @@ func (m Model) handleLockedKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 
 func (m *Model) refreshSnapshot(cmds *[]tea.Cmd) {
 	if sess := selectedSession(m.items, m.cursor); sess != nil {
+		if m.snapshotSessionID != sess.ID {
+			m.snapshotSessionID = sess.ID
+			m.snapshotRevision = 0
+		}
 		rows, cols := m.panelSize()
 		// Resize must complete before taking the snapshot. Running these as a
 		// batch races the fetch against the PTY resize and can leave Claude's
 		// status line rendered for the previous pane width.
-		*cmds = append(*cmds, resizeAndFetchSnapshotCmd(m.sockPath, sess.ID, rows, cols))
+		*cmds = append(*cmds, resizeAndFetchSnapshotCmd(m.sockPath, sess.ID, rows, cols, m.snapshotRevision))
 	} else {
+		m.snapshotSessionID = ""
+		m.snapshotRevision = 0
 		m.output = ""
 		m.viewport.SetContent("")
 	}
@@ -1699,34 +1735,34 @@ func fetchDataCmd(dbPath string) tea.Cmd {
 	}
 }
 
-func fetchSnapshotCmd(sockPath, sessionID string) tea.Cmd {
+func fetchSnapshotCmd(sockPath, sessionID string, sinceRevision uint64) tea.Cmd {
 	return func() tea.Msg {
-		text, err := fetchSnapshot(sockPath, sessionID)
+		response, err := fetchSnapshot(sockPath, sessionID, sinceRevision)
 		if err != nil {
 			if isDaemonDown(err) {
 				return daemonDownMsg{}
 			}
-			return snapshotMsg("")
+			return snapshotMsg{}
 		}
-		return snapshotMsg(text)
+		return snapshotMsg{sessionID: sessionID, text: response.Text, revision: response.Revision, changed: response.Changed}
 	}
 }
 
-func resizeAndFetchSnapshotCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
+func resizeAndFetchSnapshotCmd(sockPath, sessionID string, rows, cols uint16, sinceRevision uint64) tea.Cmd {
 	return func() tea.Msg {
 		p, _ := json.Marshal(protocol.ResizeSessionParams{SessionID: sessionID, Rows: rows, Cols: cols})
 		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdResizeSession, Payload: p})
 		// Claude redraws asynchronously after SIGWINCH. Give it a moment to
 		// update its status bar before reading the virtual terminal snapshot.
 		time.Sleep(100 * time.Millisecond)
-		text, err := fetchSnapshot(sockPath, sessionID)
+		response, err := fetchSnapshot(sockPath, sessionID, sinceRevision)
 		if err != nil {
 			if isDaemonDown(err) {
 				return daemonDownMsg{}
 			}
-			return snapshotMsg("")
+			return snapshotMsg{}
 		}
-		return snapshotMsg(text)
+		return snapshotMsg{sessionID: sessionID, text: response.Text, revision: response.Revision, changed: response.Changed}
 	}
 }
 

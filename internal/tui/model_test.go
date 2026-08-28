@@ -65,3 +65,15 @@ func TestHandleKeyKeepsGlobalShortcutsOutOfModal(t *testing.T) {
 		t.Fatal("expected ctrl+c not to quit from a modal")
 	}
 }
+
+func TestSnapshotMsgIgnoresStaleSession(t *testing.T) {
+	m := Model{sessionLocked: true, lockedSessionID: "session-current", output: "current"}
+	m.viewport.SetContent(m.output)
+	updated, _ := m.Update(snapshotMsg{
+		sessionID: "session-old", text: "stale", revision: 4, changed: true,
+	})
+	got := updated.(Model)
+	if got.output != "current" {
+		t.Fatalf("stale snapshot replaced current output with %q", got.output)
+	}
+}

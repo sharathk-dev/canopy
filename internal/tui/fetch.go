@@ -78,17 +78,17 @@ func fetchAll(dbPath string) (daemonData, error) {
 }
 
 // fetchSnapshot gets the current PTY snapshot for a session from the daemon.
-func fetchSnapshot(sockPath, sessionID string) (string, error) {
-	p, _ := json.Marshal(protocol.SnapshotParams{SessionID: sessionID})
+func fetchSnapshot(sockPath, sessionID string, sinceRevision uint64) (protocol.SnapshotResponse, error) {
+	p, _ := json.Marshal(protocol.SnapshotParams{SessionID: sessionID, SinceRevision: sinceRevision})
 	raw, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdSessionSnapshot, Payload: p})
 	if err != nil {
-		return "", err
+		return protocol.SnapshotResponse{}, err
 	}
 	var resp protocol.SnapshotResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return "", err
+		return protocol.SnapshotResponse{}, err
 	}
-	return resp.Text, nil
+	return resp, nil
 }
 
 // rpc sends one command to the daemon over a fresh connection and returns Data.

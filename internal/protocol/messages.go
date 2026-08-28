@@ -79,11 +79,14 @@ type VersionResponse struct {
 }
 
 type SnapshotParams struct {
-	SessionID string `json:"session_id"`
+	SessionID     string `json:"session_id"`
+	SinceRevision uint64 `json:"since_revision,omitempty"`
 }
 
 type SnapshotResponse struct {
-	Text string `json:"text"`
+	Text     string `json:"text"`
+	Revision uint64 `json:"revision"`
+	Changed  bool   `json:"changed"`
 }
 
 type UpdateTitleParams struct {

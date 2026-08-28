@@ -30,3 +30,11 @@ func TestTerminalResizeChangesSnapshotDimensions(t *testing.T) {
 		t.Fatalf("terminal size = %dx%d, want 40x10", cols, rows)
 	}
 }
+
+func TestSessionSnapshotCarriesRevision(t *testing.T) {
+	term := vt10x.New(vt10x.WithSize(8, 1))
+	proc := &sessionProc{term: term, revision: 7}
+	if _, revision := proc.snapshot(); revision != 7 {
+		t.Fatalf("snapshot revision = %d, want 7", revision)
+	}
+}

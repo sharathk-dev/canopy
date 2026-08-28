@@ -16,13 +16,14 @@ import (
 )
 
 type sessionProc struct {
-	id      string
-	ptmx    *os.File
-	term    vt10x.Terminal
-	mu      sync.Mutex
-	subs    map[string]chan []byte
-	done    chan struct{}
-	exitErr error
+	id       string
+	ptmx     *os.File
+	term     vt10x.Terminal
+	mu       sync.Mutex
+	subs     map[string]chan []byte
+	done     chan struct{}
+	exitErr  error
+	revision uint64
 }
 
 func startSession(params protocol.NewSessionParams, db *store.Store, injector hooks.Injector) (*sessionProc, error) {
@@ -137,6 +138,7 @@ func (s *sessionProc) readLoop() {
 			copy(chunk, buf[:n])
 			s.mu.Lock()
 			_, _ = s.term.Write(chunk)
+			s.revision++
 			for _, ch := range s.subs {
 				select {
 				case ch <- chunk:
@@ -201,6 +203,7 @@ func (s *sessionProc) resize(rows, cols uint16) error {
 	// restored sessions receive the new size but snapshots remain 80x24.
 	s.mu.Lock()
 	s.term.Resize(int(cols), int(rows))
+	s.revision++
 	s.mu.Unlock()
 	return nil
 }
@@ -209,10 +212,10 @@ func (s *sessionProc) kill() {
 	s.ptmx.Close()
 }
 
-func (s *sessionProc) snapshot() string {
+func (s *sessionProc) snapshot() (string, uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return renderTermANSI(s.term)
+	return renderTermANSI(s.term), s.revision
 }
 
 // renderTermANSI converts the vt10x cell grid back to ANSI-colored text so
