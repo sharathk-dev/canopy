@@ -158,6 +158,9 @@ func (d *Daemon) restoreSessions() {
 		d.mu.Lock()
 		d.sessions[proc.id] = proc
 		d.mu.Unlock()
+		if sess.Tool == "claude" && sess.CLISessionID != "" {
+			go d.watchResumeFailure(proc)
+		}
 	}
 
 	// Also clean hooks for sessions archived by an earlier daemon run.
