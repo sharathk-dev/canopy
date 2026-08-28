@@ -61,6 +61,20 @@ type ScheduleRun struct {
 	CacheWrite   int64
 }
 
+// Config holds user-editable canopy settings persisted in the database.
+type Config struct {
+	MaxConcurrency int
+	MaxQueueSize   int
+}
+
+// DefaultConfig returns sensible defaults used when settings are absent.
+func DefaultConfig() Config {
+	return Config{
+		MaxConcurrency: 1,
+		MaxQueueSize:   16,
+	}
+}
+
 // Session state constants in descending priority order.
 const (
 	StateNeedsInput   = "needs_input"

@@ -15,6 +15,7 @@ const (
 	kindWorktree
 	kindSession
 	kindSchedule
+	kindSettings
 )
 
 type treeItem struct {
@@ -31,9 +32,9 @@ type treeItem struct {
 func buildTree(
 	schedules []protocol.Schedule,
 	projects []protocol.Project,
-	worktrees map[string][]protocol.Worktree, // repoPath → []Worktree
-	sessions map[string][]protocol.Session, // worktreeID → []Session
-	expanded map[string]bool, // key → expanded
+	worktrees map[string][]protocol.Worktree,
+	sessions map[string][]protocol.Session,
+	expanded map[string]bool,
 ) []treeItem {
 	var items []treeItem
 	for i := range schedules {
@@ -75,6 +76,7 @@ func buildTree(
 			}
 		}
 	}
+	items = append(items, treeItem{kind: kindSettings})
 	return items
 }
 
@@ -92,10 +94,14 @@ func renderTree(items []treeItem, cursor, width, height int) string {
 	for i, item := range items {
 		newScheduleSection := item.kind == kindSchedule && (i == 0 || items[i-1].kind != kindSchedule)
 		newProjectSection := item.kind == kindProject && (i == 0 || items[i-1].kind != kindProject)
-		if i == 0 || newScheduleSection || newProjectSection {
+		newSettingsSection := item.kind == kindSettings
+		if i == 0 || newScheduleSection || newProjectSection || newSettingsSection {
 			heading := "PROJECTS"
-			if item.kind == kindSchedule {
+			switch item.kind {
+			case kindSchedule:
 				heading = "SCHEDULES"
+			case kindSettings:
+				heading = "SETTINGS"
 			}
 			lines = append(lines, treeLine{heading: heading, itemIndex: -1})
 		}
@@ -178,6 +184,9 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 			marker = "◷"
 		}
 		content = fmt.Sprintf("%s %s", marker, item.schedule.Name)
+
+	case kindSettings:
+		content = "⚙ config"
 	}
 
 	if selected {
@@ -223,6 +232,11 @@ func filterTreeItems(items []treeItem, query string) []treeItem {
 			continue
 		}
 
+		if items[i].kind == kindSettings {
+			filtered = append(filtered, items[i])
+			i++
+			continue
+		}
 		if items[i].kind != kindProject {
 			i++
 			continue

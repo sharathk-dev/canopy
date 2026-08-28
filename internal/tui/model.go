@@ -36,6 +36,9 @@ type Model struct {
 	schedules []protocol.Schedule
 	runs      map[string][]protocol.ScheduleRun
 
+	// config
+	config protocol.Config
+
 	// tree
 	items    []treeItem
 	cursor   int
@@ -163,6 +166,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = msg.sessions
 		m.schedules = msg.schedules
 		m.runs = msg.runs
+		m.config = msg.config
 		if m.ready && !m.sessionsSized {
 			rows, cols := m.panelSize()
 			for _, wtSessions := range m.sessions {
@@ -1025,6 +1029,19 @@ func (m Model) renderEmptyState(bodyH int) string {
 func (m Model) renderDetail(width, height int) string {
 	if m.cursor >= 0 && m.cursor < len(m.items) {
 		item := m.items[m.cursor]
+		if item.kind == kindSettings {
+			lines := []string{
+				"",
+				lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render("config"),
+				"",
+				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_concurrency", m.config.MaxConcurrency)),
+				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_queue_size", m.config.MaxQueueSize)),
+				"",
+				styleOutputEmpty.Render("stored in canopy.db · settings table"),
+			}
+			_ = height
+			return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+		}
 		if item.schedule != nil {
 			lastRun := "never"
 			if runs := m.runs[item.schedule.ID]; len(runs) > 0 {

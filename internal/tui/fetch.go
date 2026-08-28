@@ -17,6 +17,7 @@ type daemonData struct {
 	sessions  map[string][]protocol.Session  // worktreeID → []Session
 	schedules []protocol.Schedule
 	runs      map[string][]protocol.ScheduleRun // scheduleID → recent runs
+	config    protocol.Config
 }
 
 // fetchAll reads projects, worktrees, and sessions directly from SQLite.
@@ -58,12 +59,15 @@ func fetchAll(dbPath string) (daemonData, error) {
 		runsBySchedule[schedule.ID] = runs
 	}
 
+	config, _ := db.LoadConfig()
+
 	return daemonData{
 		projects:  projects,
 		worktrees: worktrees,
 		sessions:  sessionsByWT,
 		schedules: schedules,
 		runs:      runsBySchedule,
+		config:    config,
 	}, nil
 }
 

@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,11 @@ CREATE TABLE IF NOT EXISTS schedules (
 	cwd         TEXT NOT NULL DEFAULT '',
 	enabled     INTEGER NOT NULL DEFAULT 1,
 	last_run_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS schedule_runs (
@@ -422,6 +428,52 @@ func (s *Store) ListScheduleRuns(scheduleID string, limit int) ([]protocol.Sched
 		out = append(out, run)
 	}
 	return out, rows.Err()
+}
+
+// --- Settings ---
+
+func (s *Store) GetSetting(key string) (string, bool) {
+	var value string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&value)
+	if err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		key, value,
+	)
+	return err
+}
+
+func (s *Store) LoadConfig() (protocol.Config, error) {
+	cfg := protocol.DefaultConfig()
+	rows, err := s.db.Query(`SELECT key,value FROM settings`)
+	if err != nil {
+		return cfg, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
+		n, _ := strconv.Atoi(v)
+		switch k {
+		case "max_concurrency":
+			if n > 0 {
+				cfg.MaxConcurrency = n
+			}
+		case "max_queue_size":
+			if n > 0 {
+				cfg.MaxQueueSize = n
+			}
+		}
+	}
+	return cfg, rows.Err()
 }
 
 // --- helpers ---
