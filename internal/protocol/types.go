@@ -70,7 +70,7 @@ type Config struct {
 // DefaultConfig returns sensible defaults used when settings are absent.
 func DefaultConfig() Config {
 	return Config{
-		MaxConcurrency: 1,
+		MaxConcurrency: 5,
 		MaxQueueSize:   16,
 	}
 }

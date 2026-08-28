@@ -43,7 +43,26 @@ func (d *Daemon) runDueSchedules(ctx context.Context, now time.Time) {
 		}
 		claimed, err := d.db.ClaimSchedule(schedule.ID, minute)
 		if err == nil && claimed {
-			go d.executeSchedule(ctx, schedule)
+			if _, loaded := d.inFlight.LoadOrStore(schedule.ID, struct{}{}); !loaded {
+				select {
+				case d.scheduleQueue <- schedule:
+				default:
+					// Queue full; clear the in-flight marker so a future tick can retry.
+					d.inFlight.Delete(schedule.ID)
+				}
+			}
+		}
+	}
+}
+
+func (d *Daemon) scheduleWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case schedule := <-d.scheduleQueue:
+			d.executeSchedule(ctx, schedule)
+			d.inFlight.Delete(schedule.ID)
 		}
 	}
 }

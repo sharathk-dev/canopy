@@ -18,12 +18,14 @@ import (
 
 // Daemon owns all running PTY sessions and serves the unix socket.
 type Daemon struct {
-	db          *store.Store
-	sessions    map[string]*sessionProc
-	mu          sync.RWMutex
-	sockPath    string
-	injector    hooks.Injector
-	binaryMtime int64 // mtime of os.Executable() at daemon start
+	db            *store.Store
+	sessions      map[string]*sessionProc
+	mu            sync.RWMutex
+	sockPath      string
+	injector      hooks.Injector
+	binaryMtime   int64 // mtime of os.Executable() at daemon start
+	scheduleQueue chan protocol.Schedule
+	inFlight      sync.Map // scheduleID → struct{}: currently queued or running
 }
 
 func New(db *store.Store, sockPath string) *Daemon {
@@ -33,12 +35,14 @@ func New(db *store.Store, sockPath string) *Daemon {
 			mtime = fi.ModTime().UnixNano()
 		}
 	}
+	cfg, _ := db.LoadConfig()
 	return &Daemon{
-		db:          db,
-		sessions:    make(map[string]*sessionProc),
-		sockPath:    sockPath,
-		injector:    hooks.ClaudeInjector{},
-		binaryMtime: mtime,
+		db:            db,
+		sessions:      make(map[string]*sessionProc),
+		sockPath:      sockPath,
+		injector:      hooks.ClaudeInjector{},
+		binaryMtime:   mtime,
+		scheduleQueue: make(chan protocol.Schedule, cfg.MaxQueueSize),
 	}
 }
 
@@ -47,6 +51,11 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Recreate persisted sessions before accepting clients. This gives Canopy
 	// browser-like restore semantics when the daemon or TUI is relaunched.
 	d.restoreSessions()
+
+	cfg, _ := d.db.LoadConfig()
+	for i := 0; i < cfg.MaxConcurrency; i++ {
+		go d.scheduleWorker(ctx)
+	}
 	go d.scheduleLoop(ctx)
 
 	os.Remove(d.sockPath)
