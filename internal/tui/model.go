@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sharathk-dev/canopy/internal/protocol"
+	"github.com/sharathk-dev/canopy/internal/scheduler"
 	"github.com/sharathk-dev/canopy/internal/store"
 )
 
@@ -31,6 +33,8 @@ type Model struct {
 	projects  []protocol.Project
 	worktrees map[string][]protocol.Worktree
 	sessions  map[string][]protocol.Session
+	schedules []protocol.Schedule
+	runs      map[string][]protocol.ScheduleRun
 
 	// tree
 	items    []treeItem
@@ -67,8 +71,14 @@ type Model struct {
 	worktreeDeleteRepo  string
 	worktreeDeletePath  string
 	worktreeDeleteInput string
+	scheduleAdding      bool
+	scheduleField       int
+	scheduleName        string
+	scheduleCron        string
+	scheduleSkill       string
 	showHelp            bool
 	daemonDown          bool
+	status              string
 	err                 string
 }
 
@@ -79,6 +89,7 @@ func New(sockPath, dbPath string) Model {
 		dbPath:    dbPath,
 		worktrees: make(map[string][]protocol.Worktree),
 		sessions:  make(map[string][]protocol.Session),
+		runs:      make(map[string][]protocol.ScheduleRun),
 		expanded:  make(map[string]bool),
 	}
 }
@@ -93,6 +104,8 @@ type snapshotMsg string
 type sessionCreatedMsg string // session ID
 type errMsg string
 type daemonDownMsg struct{}
+type copiedMsg struct{}
+type clearStatusMsg struct{}
 
 // --- Init ---
 
@@ -142,6 +155,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projects = msg.projects
 		m.worktrees = msg.worktrees
 		m.sessions = msg.sessions
+		m.schedules = msg.schedules
+		m.runs = msg.runs
 		if len(m.expanded) == 0 {
 			for _, p := range m.projects {
 				m.expanded["p:"+p.ID] = true
@@ -178,6 +193,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case daemonDownMsg:
 		m.daemonDown = true
+
+	case copiedMsg:
+		m.status = "copied"
+		cmds = append(cmds, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearStatusMsg{} }))
+
+	case clearStatusMsg:
+		m.status = ""
 
 	case errMsg:
 		m.err = string(msg)
@@ -260,6 +282,41 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		default:
 			if len(msg.Runes) > 0 {
 				m.worktreeDeleteInput += string(msg.Runes)
+			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	if m.scheduleAdding {
+		fields := []*string{&m.scheduleName, &m.scheduleCron, &m.scheduleSkill}
+		switch msg.String() {
+		case "enter":
+			if strings.TrimSpace(*fields[m.scheduleField]) == "" {
+				return m, tea.Batch(cmds...)
+			}
+			if m.scheduleField < len(fields)-1 {
+				m.scheduleField++
+				return m, tea.Batch(cmds...)
+			}
+			name, cron, skill := strings.TrimSpace(m.scheduleName), strings.TrimSpace(m.scheduleCron), strings.TrimSpace(m.scheduleSkill)
+			cwd := m.selectedCWD()
+			m.scheduleAdding = false
+			m.scheduleField = 0
+			m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+			return m, tea.Batch(createScheduleCmd(m.dbPath, name, cron, skill, cwd))
+		case "esc":
+			m.scheduleAdding = false
+			m.scheduleField = 0
+			m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+		case "backspace", "ctrl+h":
+			field := fields[m.scheduleField]
+			if len(*field) > 0 {
+				runes := []rune(*field)
+				*field = string(runes[:len(runes)-1])
+			}
+		default:
+			if len(msg.Runes) > 0 {
+				*fields[m.scheduleField] += string(msg.Runes)
 			}
 		}
 		return m, tea.Batch(cmds...)
@@ -451,7 +508,22 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.refreshSnapshot(&cmds)
 		}
 
-	case " ", "enter":
+	case " ":
+		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
+			if schedule.Enabled {
+				m.status = "disabled"
+			} else {
+				m.status = "enabled"
+			}
+			cmds = append(cmds, toggleScheduleCmd(m.dbPath, *schedule), clearStatusCmd())
+			break
+		}
+		if m.rightFocused {
+			break
+		}
+		m.toggleOrAttach(&cmds)
+
+	case "enter":
 		if m.rightFocused {
 			break
 		}
@@ -468,6 +540,30 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.worktreeBranch = ""
 			m.worktreePath = ""
 			m.worktreePathMode = false
+		}
+
+	case "s":
+		m.scheduleAdding = true
+		m.scheduleField = 0
+		m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+
+	case "r":
+		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
+			m.status = "running"
+			cmds = append(cmds, runScheduleCmd(m.sockPath, m.dbPath, schedule.ID), clearStatusCmd())
+		} else {
+			cmds = append(cmds, fetchDataCmd(m.dbPath))
+		}
+
+	case "c":
+		output := m.output
+		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
+			if runs := m.runs[schedule.ID]; len(runs) > 0 {
+				output = runs[0].Output
+			}
+		}
+		if output != "" && (m.rightFocused || selectedSchedule(m.items, m.cursor) != nil) {
+			cmds = append(cmds, copyOutputCmd(output))
 		}
 
 	case "n":
@@ -498,8 +594,6 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.titleInput = sess.Title
 		}
 
-	case "r":
-		cmds = append(cmds, fetchDataCmd(m.dbPath))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -640,6 +734,16 @@ func (m Model) renderFooter() string {
 			gap = 1
 		}
 		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+	} else if m.scheduleAdding {
+		labels := []string{"name: ", "cron: ", "skill: /"}
+		values := []string{m.scheduleName, m.scheduleCron, m.scheduleSkill}
+		left := labels[m.scheduleField] + values[m.scheduleField]
+		right := styleFooterKey.Render("enter") + " next/save   " + styleFooterKey.Render("esc") + " cancel"
+		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+		if gap < 1 {
+			gap = 1
+		}
+		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
 	} else if m.newSessionCWD != "" {
 		left := "new title (optional): " + m.titleInput
 		right := styleFooterKey.Render("enter") + " start   " + styleFooterKey.Render("esc") + " cancel"
@@ -666,19 +770,44 @@ func (m Model) renderFooter() string {
 			styleFooterKey.Render("ctrl+q") + " back to tree",
 			"  typing goes to Claude",
 		}
-	} else if len(m.projects) == 0 {
+	} else if len(m.projects) == 0 && len(m.schedules) == 0 {
 		hints = []string{
 			styleFooterKey.Render("a") + " add project",
 			styleFooterKey.Render("?") + " help",
 			styleFooterKey.Render("q") + " quit",
 		}
 	} else {
+		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
+			paneHint := styleFooterKey.Render("tab") + " → output"
+			if m.rightFocused {
+				paneHint = styleFooterKey.Render("tab") + " → tree"
+			}
+			hints = []string{
+				styleFooterKey.Render("r") + " run now",
+				styleFooterKey.Render("space") + " enable/disable",
+				styleFooterKey.Render("c") + " copy output",
+				paneHint,
+				styleFooterKey.Render("?") + " help",
+				styleFooterKey.Render("q") + " quit",
+			}
+			left := strings.Join(hints, "   ")
+			if m.status != "" {
+				right := styleFooterKey.Render(m.status)
+				gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
+				if gap < 1 {
+					gap = 1
+				}
+				return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+			}
+			return styleFooter.Width(m.width).Render(left)
+		}
 		paneHint := styleFooterKey.Render("tab") + " → output"
 		if m.rightFocused {
 			paneHint = styleFooterKey.Render("tab") + " → tree"
 		}
 		hints = []string{
 			styleFooterKey.Render("enter") + " expand/attach",
+			styleFooterKey.Render("s") + " schedule",
 			styleFooterKey.Render("n") + " new session",
 			paneHint,
 			styleFooterKey.Render("?") + " help",
@@ -711,6 +840,9 @@ func (m Model) renderHelp() string {
 		"",
 		key.Render("a") + "            add project",
 		key.Render("w") + "            add worktree",
+		key.Render("s") + "            add schedule",
+		key.Render("r") + "            run selected schedule / refresh",
+		key.Render("space") + "        enable or disable selected schedule",
 		key.Render("x") + "            remove selected project or worktree",
 		"",
 		section.Render("Sessions"),
@@ -737,7 +869,7 @@ func (m Model) renderBody() string {
 		bodyH = 1
 	}
 
-	if len(m.projects) == 0 {
+	if len(m.projects) == 0 && len(m.schedules) == 0 {
 		return m.renderEmptyState(bodyH)
 	}
 
@@ -760,7 +892,7 @@ func (m Model) renderBody() string {
 		titleStyle = stylePanelTitle.Foreground(colorSelected)
 	}
 
-	left := titleStyle.Width(leftW).Render("PROJECTS") + "\n" +
+	left := titleStyle.Width(leftW).Render("WORKSPACE") + "\n" +
 		renderTree(m.items, m.cursor, leftW, treeH)
 
 	divLines := make([]string, bodyH)
@@ -795,6 +927,16 @@ func (m Model) renderEmptyState(bodyH int) string {
 func (m Model) renderDetail(width, height int) string {
 	if m.cursor >= 0 && m.cursor < len(m.items) {
 		item := m.items[m.cursor]
+		if item.schedule != nil {
+			lastRun := "never"
+			if runs := m.runs[item.schedule.ID]; len(runs) > 0 {
+				lastRun = runs[0].StartedAt.Local().Format(time.DateTime) + "  " + runs[0].Status
+				if runs[0].Output != "" {
+					return lipgloss.NewStyle().Width(width).Render("\n" + lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(item.schedule.Name) + "\n\n" + styleOutputEmpty.Render("cron     "+item.schedule.Cron) + "\n" + styleOutputEmpty.Render("skill    /"+item.schedule.Action) + "\n" + styleOutputEmpty.Render("last run "+lastRun) + "\n\n" + runs[0].Output)
+				}
+			}
+			return lipgloss.NewStyle().Width(width).Render("\n" + lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(item.schedule.Name) + "\n\n" + styleOutputEmpty.Render("cron     "+item.schedule.Cron) + "\n" + styleOutputEmpty.Render("skill    /"+item.schedule.Action) + "\n" + styleOutputEmpty.Render("last run "+lastRun) + "\n\n" + styleOutputEmpty.Render("r run now   space enable/disable"))
+		}
 		if item.worktree != nil {
 			lines := []string{
 				"",
@@ -842,7 +984,7 @@ func (m Model) renderDetail(width, height int) string {
 // --- helpers ---
 
 func (m *Model) rebuildItems() {
-	m.items = buildTree(m.projects, m.worktrees, m.sessions, m.expanded)
+	m.items = buildTree(m.schedules, m.projects, m.worktrees, m.sessions, m.expanded)
 }
 
 func (m *Model) clampCursor() {
@@ -890,6 +1032,9 @@ func (m *Model) selectedCWD() string {
 	item := m.items[m.cursor]
 	if item.worktree != nil {
 		return item.worktree.Path
+	}
+	if item.project != nil {
+		return item.project.RepoPath
 	}
 	if item.session != nil {
 		return item.session.CWD
@@ -988,6 +1133,86 @@ func deleteProjectCmd(dbPath, projectID string) tea.Cmd {
 		}
 		return fetchDataCmd(dbPath)()
 	}
+}
+
+func createScheduleCmd(dbPath, name, cron, skill, cwd string) tea.Cmd {
+	return func() tea.Msg {
+		if _, err := scheduler.ParseCron(cron); err != nil {
+			return errMsg("invalid cron: " + err.Error())
+		}
+		db, err := store.Open(dbPath)
+		if err != nil {
+			return errMsg("open store: " + err.Error())
+		}
+		defer db.Close()
+		err = db.CreateSchedule(protocol.Schedule{ID: protocol.NewID(), Name: name, ActionType: "skill", Action: strings.TrimPrefix(skill, "/"), Cron: cron, CWD: cwd, Enabled: true})
+		if err != nil {
+			return errMsg("save schedule: " + err.Error())
+		}
+		return fetchDataCmd(dbPath)()
+	}
+}
+
+func toggleScheduleCmd(dbPath string, schedule protocol.Schedule) tea.Cmd {
+	return func() tea.Msg {
+		db, err := store.Open(dbPath)
+		if err != nil {
+			return errMsg("open store: " + err.Error())
+		}
+		defer db.Close()
+		if err := db.SetScheduleEnabled(schedule.ID, !schedule.Enabled); err != nil {
+			return errMsg("update schedule: " + err.Error())
+		}
+		return fetchDataCmd(dbPath)()
+	}
+}
+
+func runScheduleCmd(sockPath, dbPath, scheduleID string) tea.Cmd {
+	return func() tea.Msg {
+		payload, _ := json.Marshal(protocol.RunScheduleParams{ScheduleID: scheduleID})
+		if _, err := rpc(sockPath, protocol.Cmd{Type: protocol.CmdRunSchedule, Payload: payload}); err != nil {
+			return errMsg("run schedule: " + err.Error())
+		}
+		return fetchDataCmd(dbPath)()
+	}
+}
+
+func copyOutputCmd(output string) tea.Cmd {
+	return func() tea.Msg {
+		var name string
+		switch runtime.GOOS {
+		case "darwin":
+			name = "pbcopy"
+		case "linux":
+			for _, candidate := range []string{"wl-copy", "xclip", "xsel"} {
+				if _, err := exec.LookPath(candidate); err == nil {
+					name = candidate
+					break
+				}
+			}
+		default:
+			return errMsg("copy output: unsupported platform")
+		}
+		if name == "" {
+			return errMsg("copy output: install wl-clipboard, xclip, or xsel")
+		}
+
+		cmd := exec.Command(name)
+		if name == "xclip" {
+			cmd.Args = []string{name, "-selection", "clipboard"}
+		} else if name == "xsel" {
+			cmd.Args = []string{name, "--clipboard", "--input"}
+		}
+		cmd.Stdin = strings.NewReader(output)
+		if err := cmd.Run(); err != nil {
+			return errMsg("copy output: " + err.Error())
+		}
+		return copiedMsg{}
+	}
+}
+
+func clearStatusCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearStatusMsg{} })
 }
 
 func createSessionCmd(sockPath, cwd, title string, rows, cols uint16) tea.Cmd {

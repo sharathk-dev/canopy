@@ -62,6 +62,11 @@ canopy session kill <session-id>
 canopy daemon status
 canopy daemon start
 canopy daemon stop
+canopy daemon install       # start at login (macOS/Linux)
+canopy schedule add <name> --skill <skill> --cron "0 9 * * 1-5"
+canopy schedule list
+canopy schedule run <name>
+canopy schedule runs <name>
 ```
 
 `session kill` asks for confirmation before terminating a session.

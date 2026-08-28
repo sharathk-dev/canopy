@@ -47,6 +47,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// Recreate persisted sessions before accepting clients. This gives Canopy
 	// browser-like restore semantics when the daemon or TUI is relaunched.
 	d.restoreSessions()
+	go d.scheduleLoop(ctx)
 
 	os.Remove(d.sockPath)
 	ln, err := net.Listen("unix", d.sockPath)
@@ -191,6 +192,8 @@ func (d *Daemon) handleConn(conn net.Conn) {
 			d.handleResizeSession(conn, cmd.Payload)
 		case protocol.CmdUpdateTitle:
 			d.handleUpdateTitle(conn, cmd.Payload)
+		case protocol.CmdRunSchedule:
+			d.handleRunSchedule(conn, cmd.Payload)
 		default:
 			d.sendErr(conn, fmt.Sprintf("unknown command: %s", cmd.Type))
 		}

@@ -34,6 +34,33 @@ type Session struct {
 	StartedAt    time.Time
 }
 
+// Schedule is a recurring skill or command owned by Canopy.
+type Schedule struct {
+	ID         string
+	Name       string
+	ActionType string // "skill" or "command"
+	Action     string
+	Cron       string
+	CWD        string
+	Enabled    bool
+	LastRunAt  time.Time
+}
+
+// ScheduleRun records one execution of a Schedule.
+type ScheduleRun struct {
+	ID           string
+	ScheduleID   string
+	StartedAt    time.Time
+	FinishedAt   time.Time
+	Status       string
+	Output       string
+	Error        string
+	InputTokens  int64
+	OutputTokens int64
+	CacheRead    int64
+	CacheWrite   int64
+}
+
 // Session state constants in descending priority order.
 const (
 	StateNeedsInput   = "needs_input"

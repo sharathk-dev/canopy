@@ -46,6 +46,31 @@ CREATE TABLE IF NOT EXISTS sessions (
 	pid             INTEGER NOT NULL DEFAULT 0,
 	started_at      DATETIME NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS schedules (
+	id          TEXT PRIMARY KEY,
+	name        TEXT NOT NULL UNIQUE,
+	action_type TEXT NOT NULL,
+	action      TEXT NOT NULL,
+	cron        TEXT NOT NULL,
+	cwd         TEXT NOT NULL DEFAULT '',
+	enabled     INTEGER NOT NULL DEFAULT 1,
+	last_run_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS schedule_runs (
+	id             TEXT PRIMARY KEY,
+	schedule_id    TEXT NOT NULL,
+	started_at     INTEGER NOT NULL,
+	finished_at    INTEGER NOT NULL DEFAULT 0,
+	status         TEXT NOT NULL,
+	output         TEXT NOT NULL DEFAULT '',
+	error          TEXT NOT NULL DEFAULT '',
+	input_tokens   INTEGER NOT NULL DEFAULT 0,
+	output_tokens  INTEGER NOT NULL DEFAULT 0,
+	cache_read     INTEGER NOT NULL DEFAULT 0,
+	cache_write    INTEGER NOT NULL DEFAULT 0
+);
 `
 
 // Open opens (or creates) the SQLite database at path and applies the schema.
@@ -55,6 +80,12 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // SQLite WAL is fine with one writer
+	// The daemon and TUI use separate SQLite connections. WAL permits readers
+	// during writes, while busy_timeout handles the short writer handoff.
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
@@ -284,6 +315,115 @@ func (s *Store) ListActiveSessions() ([]protocol.Session, error) {
 	return scanSessions(rows)
 }
 
+// --- Schedules ---
+
+func (s *Store) CreateSchedule(schedule protocol.Schedule) error {
+	_, err := s.db.Exec(
+		`INSERT INTO schedules(id,name,action_type,action,cron,cwd,enabled,last_run_at)
+		 VALUES(?,?,?,?,?,?,?,0)`,
+		schedule.ID, schedule.Name, schedule.ActionType, schedule.Action,
+		schedule.Cron, schedule.CWD, boolInt(schedule.Enabled),
+	)
+	return err
+}
+
+func (s *Store) GetSchedule(id string) (protocol.Schedule, error) {
+	row := s.db.QueryRow(
+		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE id=?`, id)
+	return scanSchedule(row)
+}
+
+func (s *Store) GetScheduleByName(name string) (protocol.Schedule, error) {
+	row := s.db.QueryRow(
+		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE name=?`, name)
+	return scanSchedule(row)
+}
+
+func (s *Store) ListSchedules() ([]protocol.Schedule, error) {
+	rows, err := s.db.Query(
+		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []protocol.Schedule
+	for rows.Next() {
+		schedule, err := scanSchedule(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, schedule)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetScheduleEnabled(id string, enabled bool) error {
+	_, err := s.db.Exec(`UPDATE schedules SET enabled=? WHERE id=?`, boolInt(enabled), id)
+	return err
+}
+
+// ClaimSchedule claims a schedule for the given cron minute. SQLite's update
+// count makes this safe if two daemon processes happen to inspect the same job.
+func (s *Store) ClaimSchedule(id string, minute time.Time) (bool, error) {
+	stamp := minute.Unix()
+	result, err := s.db.Exec(
+		`UPDATE schedules SET last_run_at=? WHERE id=? AND enabled=1 AND last_run_at<?`,
+		stamp, id, stamp,
+	)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func (s *Store) CreateScheduleRun(run protocol.ScheduleRun) error {
+	_, err := s.db.Exec(
+		`INSERT INTO schedule_runs(id,schedule_id,started_at,finished_at,status,output,error,input_tokens,output_tokens,cache_read,cache_write)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		run.ID, run.ScheduleID, run.StartedAt.Unix(), unixOrZero(run.FinishedAt), run.Status,
+		run.Output, run.Error, run.InputTokens, run.OutputTokens, run.CacheRead, run.CacheWrite,
+	)
+	return err
+}
+
+func (s *Store) FinishScheduleRun(run protocol.ScheduleRun) error {
+	_, err := s.db.Exec(
+		`UPDATE schedule_runs SET finished_at=?,status=?,output=?,error=?,input_tokens=?,output_tokens=?,cache_read=?,cache_write=? WHERE id=?`,
+		unixOrZero(run.FinishedAt), run.Status, run.Output, run.Error,
+		run.InputTokens, run.OutputTokens, run.CacheRead, run.CacheWrite, run.ID,
+	)
+	return err
+}
+
+func (s *Store) ListScheduleRuns(scheduleID string, limit int) ([]protocol.ScheduleRun, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.Query(
+		`SELECT id,schedule_id,started_at,finished_at,status,output,error,input_tokens,output_tokens,cache_read,cache_write
+		 FROM schedule_runs WHERE schedule_id=? ORDER BY started_at DESC LIMIT ?`, scheduleID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []protocol.ScheduleRun
+	for rows.Next() {
+		var run protocol.ScheduleRun
+		var startedAt, finishedAt int64
+		if err := rows.Scan(&run.ID, &run.ScheduleID, &startedAt, &finishedAt, &run.Status,
+			&run.Output, &run.Error, &run.InputTokens, &run.OutputTokens, &run.CacheRead, &run.CacheWrite); err != nil {
+			return nil, err
+		}
+		run.StartedAt = time.Unix(startedAt, 0)
+		if finishedAt != 0 {
+			run.FinishedAt = time.Unix(finishedAt, 0)
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
 // --- helpers ---
 
 type scanner interface {
@@ -320,9 +460,32 @@ func scanSessions(rows *sql.Rows) ([]protocol.Session, error) {
 	return out, rows.Err()
 }
 
+func scanSchedule(row scanner) (protocol.Schedule, error) {
+	var schedule protocol.Schedule
+	var enabled int
+	var lastRun int64
+	err := row.Scan(&schedule.ID, &schedule.Name, &schedule.ActionType, &schedule.Action,
+		&schedule.Cron, &schedule.CWD, &enabled, &lastRun)
+	if err != nil {
+		return schedule, err
+	}
+	schedule.Enabled = enabled != 0
+	if lastRun != 0 {
+		schedule.LastRunAt = time.Unix(lastRun, 0)
+	}
+	return schedule, nil
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
 	}
 	return 0
+}
+
+func unixOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }

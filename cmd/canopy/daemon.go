@@ -39,6 +39,18 @@ var daemonStatusCmd = &cobra.Command{
 	RunE:  runDaemonStatus,
 }
 
+var daemonInstallCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install and start the per-user daemon service",
+	RunE:  func(_ *cobra.Command, _ []string) error { return installDaemonService() },
+}
+
+var daemonUninstallCmd = &cobra.Command{
+	Use:   "uninstall",
+	Short: "Remove the per-user daemon service",
+	RunE:  func(_ *cobra.Command, _ []string) error { return uninstallDaemonService() },
+}
+
 // _run is the hidden command that actually runs the daemon process.
 var daemonRunCmd = &cobra.Command{
 	Use:    "_run",
@@ -50,6 +62,8 @@ func init() {
 	daemonCmd.AddCommand(daemonStartCmd)
 	daemonCmd.AddCommand(daemonStopCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
+	daemonCmd.AddCommand(daemonInstallCmd)
+	daemonCmd.AddCommand(daemonUninstallCmd)
 	daemonCmd.AddCommand(daemonRunCmd)
 	rootCmd.AddCommand(daemonCmd)
 }

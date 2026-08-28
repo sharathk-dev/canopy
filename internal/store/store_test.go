@@ -73,3 +73,28 @@ func TestWorktreePathPrefixRequiresBoundary(t *testing.T) {
 		t.Fatalf("got worktree %q, want %q", got.ID, worktree.ID)
 	}
 }
+
+func TestScheduleClaimIsIdempotent(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "canopy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	schedule := protocol.Schedule{
+		ID: "schedule-1", Name: "test", ActionType: "command",
+		Action: "echo test", Cron: "* * * * *", Enabled: true,
+	}
+	if err := db.CreateSchedule(schedule); err != nil {
+		t.Fatal(err)
+	}
+	minute := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
+	claimed, err := db.ClaimSchedule(schedule.ID, minute)
+	if err != nil || !claimed {
+		t.Fatalf("first claim: claimed=%v err=%v", claimed, err)
+	}
+	claimed, err = db.ClaimSchedule(schedule.ID, minute)
+	if err != nil || claimed {
+		t.Fatalf("second claim: claimed=%v err=%v", claimed, err)
+	}
+}

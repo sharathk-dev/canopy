@@ -68,7 +68,7 @@ type Session struct {
 }
 ```
 
-SQLite tables are `projects`, `worktrees`, and `sessions`. Session metadata is persisted
+SQLite tables are `projects`, `worktrees`, `sessions`, `schedules`, and `schedule_runs`. Session metadata is persisted
 at `~/.local/share/canopy/canopy.db`. Project removal is a soft-unregister; worktrees and
 sessions are retained. A Git worktree removed outside Canopy is marked missing on the next
 daemon startup. Explicit `canopy worktree remove` also marks it missing rather than deleting
@@ -133,6 +133,7 @@ canopy session attach <session-id>
 canopy session resume <session-id>
 canopy session kill <session-id>
 canopy daemon start|stop|status
+canopy daemon install|uninstall
 ```
 
 ## Implementation stack
@@ -172,3 +173,11 @@ docs/plan/           Design notes
   to a fresh session instead of marking restoration as failed.
 - Project removal is a reversible soft-unregister. It hides the project without deleting
   its repository, worktrees, or sessions; registering the same repository restores it.
+
+Schedules store either a Claude skill or shell command, a five-field cron expression, an
+optional working directory, enabled state, and the last claimed minute. Each execution is
+recorded in `schedule_runs` with status, Markdown output, errors, and Claude input/output/cache
+usage where available. `canopy schedule run <name>` triggers an immediate run; `canopy schedule
+runs <name>` shows recent results. The daemon evaluates schedules every 30 seconds.
+`canopy daemon install` installs an opt-in per-user service: a systemd user unit on Linux
+or a LaunchAgent on macOS. This keeps the scheduler alive across TUI exits and logins.

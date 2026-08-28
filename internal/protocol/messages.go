@@ -12,6 +12,7 @@ const (
 	CmdUpdateTitle     = "update_title"
 	CmdSessionSnapshot = "session_snapshot"
 	CmdResizeSession   = "resize_session"
+	CmdRunSchedule     = "run_schedule"
 )
 
 // Cmd is a client→daemon command envelope.
@@ -88,4 +89,8 @@ type SnapshotResponse struct {
 type UpdateTitleParams struct {
 	SessionID string `json:"session_id"`
 	Title     string `json:"title"`
+}
+
+type RunScheduleParams struct {
+	ScheduleID string `json:"schedule_id"`
 }

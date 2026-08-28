@@ -14,6 +14,7 @@ const (
 	kindProject treeItemKind = iota
 	kindWorktree
 	kindSession
+	kindSchedule
 )
 
 type treeItem struct {
@@ -21,18 +22,23 @@ type treeItem struct {
 	project  *protocol.Project
 	worktree *protocol.Worktree
 	session  *protocol.Session
+	schedule *protocol.Schedule
 	expanded bool
 }
 
 // buildTree flattens the project→worktree→session hierarchy into a list
 // of tree items for keyboard navigation.
 func buildTree(
+	schedules []protocol.Schedule,
 	projects []protocol.Project,
 	worktrees map[string][]protocol.Worktree, // repoPath → []Worktree
 	sessions map[string][]protocol.Session, // worktreeID → []Session
 	expanded map[string]bool, // key → expanded
 ) []treeItem {
 	var items []treeItem
+	for i := range schedules {
+		items = append(items, treeItem{kind: kindSchedule, schedule: &schedules[i]})
+	}
 	for i := range projects {
 		p := &projects[i]
 		projKey := "p:" + p.ID
@@ -78,18 +84,44 @@ func renderTree(items []treeItem, cursor, width, height int) string {
 		return styleOutputEmpty.Render("No projects.\nRun: canopy project add")
 	}
 
-	// Compute scroll offset so cursor is always visible.
-	offset := 0
-	if cursor >= height {
-		offset = cursor - height + 1
+	type treeLine struct {
+		heading   string
+		itemIndex int
+	}
+	var lines []treeLine
+	for i, item := range items {
+		newScheduleSection := item.kind == kindSchedule && (i == 0 || items[i-1].kind != kindSchedule)
+		newProjectSection := item.kind == kindProject && (i == 0 || items[i-1].kind != kindProject)
+		if i == 0 || newScheduleSection || newProjectSection {
+			heading := "PROJECTS"
+			if item.kind == kindSchedule {
+				heading = "SCHEDULES"
+			}
+			lines = append(lines, treeLine{heading: heading, itemIndex: -1})
+		}
+		lines = append(lines, treeLine{itemIndex: i})
+	}
+
+	selectedLine := 0
+	for i, line := range lines {
+		if line.itemIndex == cursor {
+			selectedLine = i
+			break
+		}
+	}
+	start := selectedLine - height + 1
+	if start < 0 {
+		start = 0
 	}
 
 	var sb strings.Builder
-	for i := offset; i < len(items) && i < offset+height; i++ {
-		item := items[i]
-		selected := i == cursor
-		line := renderTreeItem(item, selected, width)
-		sb.WriteString(line)
+	for i := start; i < len(lines) && i < start+height; i++ {
+		line := lines[i]
+		if line.heading != "" {
+			sb.WriteString(stylePanelTitle.Width(width).Render(line.heading))
+		} else {
+			sb.WriteString(renderTreeItem(items[line.itemIndex], line.itemIndex == cursor, width))
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -139,6 +171,13 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 				lipgloss.NewStyle().Foreground(colorText).Render(name),
 			)
 		}
+
+	case kindSchedule:
+		marker := "○"
+		if item.schedule.Enabled {
+			marker = "◷"
+		}
+		content = fmt.Sprintf("%s %s", marker, item.schedule.Name)
 	}
 
 	if selected {
@@ -157,6 +196,13 @@ func selectedSession(items []treeItem, cursor int) *protocol.Session {
 		return item.session
 	}
 	return nil
+}
+
+func selectedSchedule(items []treeItem, cursor int) *protocol.Schedule {
+	if cursor < 0 || cursor >= len(items) || items[cursor].kind != kindSchedule {
+		return nil
+	}
+	return items[cursor].schedule
 }
 
 // firstSessionIndex returns the index of the first session item, or -1.
