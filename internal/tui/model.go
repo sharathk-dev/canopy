@@ -61,7 +61,7 @@ type Model struct {
 	titleInput          string
 	newSessionCWD       string
 	projectAdding       bool
-	projectPath         string
+	picker              picker
 	worktreeAdding      bool
 	worktreeRepo        string
 	worktreeBranch      string
@@ -180,10 +180,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.sessionsSized = true
 		}
-		if len(m.expanded) == 0 {
-			for _, p := range m.projects {
+		for _, p := range m.projects {
+			if _, seen := m.expanded["p:"+p.ID]; !seen {
 				m.expanded["p:"+p.ID] = true
-				for _, wt := range m.worktrees[p.RepoPath] {
+			}
+			for _, wt := range m.worktrees[p.RepoPath] {
+				if _, seen := m.expanded["w:"+wt.ID]; !seen {
 					m.expanded["w:"+wt.ID] = true
 				}
 			}
@@ -412,10 +414,9 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if m.projectAdding {
 		switch msg.String() {
 		case "enter":
-			path := strings.TrimSpace(m.projectPath)
-			if path != "" {
+			if len(m.picker.matches) > 0 && m.picker.cursor < len(m.picker.matches) {
+				path := m.picker.matches[m.picker.cursor].path
 				m.projectAdding = false
-				m.projectPath = ""
 				return m, tea.ExecProcess(
 					exec.Command(executablePath(), "project", "add", path),
 					func(error) tea.Msg { return fetchDataCmd(m.dbPath)() },
@@ -423,15 +424,30 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			}
 		case "esc":
 			m.projectAdding = false
-			m.projectPath = ""
+		case "up", "k":
+			if m.picker.cursor > 0 {
+				m.picker.cursor--
+				m.picker.clampCursor()
+			}
+		case "down", "j":
+			if m.picker.cursor < len(m.picker.matches)-1 {
+				m.picker.cursor++
+				m.picker.clampCursor()
+			}
 		case "backspace", "ctrl+h":
-			if len(m.projectPath) > 0 {
-				runes := []rune(m.projectPath)
-				m.projectPath = string(runes[:len(runes)-1])
+			if len(m.picker.input) > 0 {
+				runes := []rune(m.picker.input)
+				m.picker.input = string(runes[:len(runes)-1])
+				m.picker.filter()
+				m.picker.cursor = 0
+				m.picker.offset = 0
 			}
 		default:
 			if len(msg.Runes) > 0 {
-				m.projectPath += string(msg.Runes)
+				m.picker.input += string(msg.Runes)
+				m.picker.filter()
+				m.picker.cursor = 0
+				m.picker.offset = 0
 			}
 		}
 		return m, tea.Batch(cmds...)
@@ -623,7 +639,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	case "a":
 		m.projectAdding = true
-		m.projectPath = ""
+		m.picker = newPicker(pickerHeight)
 
 	case "w":
 		if repo := m.selectedRepoPath(); repo != "" {
@@ -780,6 +796,9 @@ func (m Model) View() string {
 	if colorPanel != "" {
 		view = lipgloss.NewStyle().Background(colorPanel).Width(m.width).Height(m.height).Render(view)
 	}
+	if m.projectAdding {
+		view = m.renderPickerModal()
+	}
 	return view
 }
 
@@ -797,14 +816,6 @@ func (m Model) renderFooter() string {
 	} else if m.worktreeDeleteID != "" {
 		left := "type DELETE to remove worktree: " + m.worktreeDeleteInput
 		right := styleFooterKey.Render("enter") + " confirm   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.projectAdding {
-		left := "project path: " + m.projectPath
-		right := styleFooterKey.Render("enter") + " add   " + styleFooterKey.Render("esc") + " cancel"
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
 		if gap < 1 {
 			gap = 1

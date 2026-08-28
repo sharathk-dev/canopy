@@ -18,6 +18,7 @@ die() {
 # Stop the daemon gracefully before removing the binary.
 bin="${INSTALL_DIR}/${BINARY}"
 if [ -x "$bin" ]; then
+    "$bin" daemon uninstall 2>/dev/null || true
     "$bin" daemon stop 2>/dev/null && echo "Stopped canopy daemon." || true
 fi
 

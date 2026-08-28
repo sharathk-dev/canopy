@@ -19,7 +19,7 @@ The installer places `canopy` in `~/.local/bin`. Open a new terminal, or source 
 The installer uses published GitHub Release binaries. To install a specific version:
 
 ```bash
-VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/install.sh | VERSION=v0.1.0-beta.1 bash
 ```
 
 ## Quick start

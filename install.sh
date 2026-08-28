@@ -4,7 +4,7 @@ set -euo pipefail
 # Install the latest published Canopy binary.
 #
 #   curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/install.sh | bash
-#   VERSION=v0.1.0 bash install.sh
+#   curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/install.sh | VERSION=v0.1.0-beta.1 bash
 
 REPO="${REPO:-sharathk-dev/canopy}"
 VERSION="${VERSION:-latest}"
@@ -38,11 +38,29 @@ else
 fi
 
 tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+checksums="$(mktemp)"
+trap 'rm -f "$tmp" "$checksums"' EXIT
 
 echo "Downloading ${asset} (${VERSION})..."
 curl --fail --location --silent --show-error --retry 3 "$url" --output "$tmp" \
     || die "could not download ${url}; check that this version has a published ${asset} release"
+
+if [ "$VERSION" = "latest" ]; then
+    checksum_url="https://github.com/${REPO}/releases/latest/download/checksums.txt"
+else
+    checksum_url="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+fi
+echo "Verifying ${asset}..."
+curl --fail --location --silent --show-error --retry 3 "$checksum_url" --output "$checksums" \
+    || die "could not download release checksums"
+expected="$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$checksums")"
+[ -n "$expected" ] || die "no checksum found for ${asset}"
+if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$tmp" | awk '{print $1}')"
+else
+    actual="$(shasum -a 256 "$tmp" | awk '{print $1}')"
+fi
+[ "$actual" = "$expected" ] || die "checksum verification failed for ${asset}"
 
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp" "${INSTALL_DIR}/${BINARY}"
