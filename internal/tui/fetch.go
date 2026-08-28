@@ -18,6 +18,7 @@ type daemonData struct {
 	schedules []protocol.Schedule
 	runs      map[string][]protocol.ScheduleRun // scheduleID → recent runs
 	config    protocol.Config
+	themeName string
 }
 
 // fetchAll reads projects, worktrees, and sessions directly from SQLite.
@@ -60,6 +61,10 @@ func fetchAll(dbPath string) (daemonData, error) {
 	}
 
 	config, _ := db.LoadConfig()
+	themeName, _ := db.GetSetting("theme")
+	if themeName == "" {
+		themeName = "system"
+	}
 
 	return daemonData{
 		projects:  projects,
@@ -68,6 +73,7 @@ func fetchAll(dbPath string) (daemonData, error) {
 		schedules: schedules,
 		runs:      runsBySchedule,
 		config:    config,
+		themeName: themeName,
 	}, nil
 }
 

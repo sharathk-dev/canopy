@@ -10,15 +10,16 @@ import (
 var animationFrame uint64
 
 var (
-	colorPanel      = lipgloss.Color("#111111")
-	colorBorder     = lipgloss.Color("#4a5568") // visible but not distracting
-	colorSelected   = lipgloss.Color("#3b82f6") // blue
-	colorText       = lipgloss.Color("#e2e8f0")
-	colorDim        = lipgloss.Color("#64748b")
-	colorRunning    = lipgloss.Color("#f97316") // orange
-	colorWaiting    = lipgloss.Color("#f87171") // coral red
-	colorFinished   = lipgloss.Color("#64748b") // dim
-	colorTerminated = lipgloss.Color("#ef4444") // red
+	colorPanel      = activeTheme.Panel
+	colorBorder     = activeTheme.Border
+	colorSelected   = activeTheme.Selected
+	colorText       = activeTheme.Text
+	colorDim        = activeTheme.Dim
+	colorKey        = activeTheme.Key
+	colorRunning    = activeTheme.Running
+	colorWaiting    = activeTheme.Waiting
+	colorFinished   = activeTheme.Finished
+	colorTerminated = activeTheme.Terminated
 
 	styleHeader = lipgloss.NewStyle().
 			Background(colorPanel).
@@ -35,7 +36,7 @@ var (
 			Padding(0, 1)
 
 	styleFooterKey = lipgloss.NewStyle().
-			Foreground(colorText).
+			Foreground(colorKey).
 			Bold(true)
 
 	stylePanelTitle = lipgloss.NewStyle().

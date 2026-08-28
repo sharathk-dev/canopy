@@ -36,7 +36,8 @@ type Model struct {
 	runs      map[string][]protocol.ScheduleRun
 
 	// config
-	config protocol.Config
+	config    protocol.Config
+	themeName string
 
 	// tree
 	items    []treeItem
@@ -166,6 +167,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.schedules = msg.schedules
 		m.runs = msg.runs
 		m.config = msg.config
+		if msg.themeName != m.themeName {
+			m.themeName = msg.themeName
+			SetTheme(ThemeByName(m.themeName))
+		}
 		if m.ready && !m.sessionsSized {
 			rows, cols := m.panelSize()
 			for _, wtSessions := range m.sessions {
@@ -629,6 +634,14 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.worktreePathMode = false
 		}
 
+	case "t":
+		if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindSettings {
+			next := NextThemeName(m.themeName)
+			m.themeName = next
+			SetTheme(ThemeByName(next))
+			cmds = append(cmds, saveThemeCmd(m.dbPath, next))
+		}
+
 	case "s":
 		m.scheduleAdding = true
 		m.scheduleField = 0
@@ -760,10 +773,14 @@ func (m Model) View() string {
 		return m.renderHelp()
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	view := lipgloss.JoinVertical(lipgloss.Left,
 		m.renderBody(),
 		m.renderFooter(),
 	)
+	if colorPanel != "" {
+		view = lipgloss.NewStyle().Background(colorPanel).Width(m.width).Height(m.height).Render(view)
+	}
+	return view
 }
 
 func (m Model) renderHeader() string {
@@ -931,6 +948,7 @@ func (m Model) renderFooter() string {
 			return styleFooter.Width(m.width).Render(left)
 		default: // kindSettings
 			hints = []string{
+				styleFooterKey.Render("t") + " theme",
 				styleFooterKey.Render("?") + " help",
 				styleFooterKey.Render("q") + " quit",
 			}
@@ -1096,12 +1114,28 @@ func (m Model) renderDetail(width, height int) string {
 	if m.cursor >= 0 && m.cursor < len(m.items) {
 		item := m.items[m.cursor]
 		if item.kind == kindSettings {
+			themeName := m.themeName
+			if themeName == "" {
+				themeName = "system"
+			}
+			activeStyle := lipgloss.NewStyle().Foreground(colorKey).Bold(true)
+			dimStyle := lipgloss.NewStyle().Foreground(colorDim)
+			var themeParts []string
+			for _, n := range ThemeNames {
+				if n == themeName {
+					themeParts = append(themeParts, activeStyle.Render("["+n+"]"))
+				} else {
+					themeParts = append(themeParts, dimStyle.Render(n))
+				}
+			}
+			themeRow := fmt.Sprintf("%-22s %s", "theme", strings.Join(themeParts, "  "))
 			lines := []string{
 				"",
 				lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render("config"),
 				"",
 				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_concurrency", m.config.MaxConcurrency)),
 				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_queue_size", m.config.MaxQueueSize)),
+				styleOutputEmpty.Render(themeRow),
 				"",
 				styleOutputEmpty.Render("stored in canopy.db · settings table"),
 			}
@@ -1484,6 +1518,18 @@ func copyOutputCmd(output string) tea.Cmd {
 
 func clearStatusCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return clearStatusMsg{} })
+}
+
+func saveThemeCmd(dbPath, name string) tea.Cmd {
+	return func() tea.Msg {
+		db, err := store.Open(dbPath)
+		if err != nil {
+			return errMsg(err.Error())
+		}
+		defer db.Close()
+		_ = db.SetSetting("theme", name)
+		return nil
+	}
 }
 
 func createSessionCmd(sockPath, cwd, title string, rows, cols uint16) tea.Cmd {
