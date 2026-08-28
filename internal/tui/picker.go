@@ -158,8 +158,8 @@ func (p *picker) clampCursor() {
 }
 
 func (p picker) render(width, height int) string {
-	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
-	textStyle := lipgloss.NewStyle().Foreground(colorText)
+	dimStyle := themed(colorDim)
+	textStyle := themed(colorText)
 
 	innerW := width - 2 // subtract border
 	if innerW < 10 {
@@ -214,7 +214,7 @@ func (p picker) render(width, height int) string {
 		listLines = []string{}
 		for i := 0; i < listRows; i++ {
 			if i == 0 {
-				listLines = append(listLines, lipgloss.NewStyle().Width(innerW).Foreground(colorDim).Render("  no matches"))
+				listLines = append(listLines, themed(colorDim).Width(innerW).Render("  no matches"))
 			} else {
 				listLines = append(listLines, strings.Repeat(" ", innerW))
 			}
@@ -248,14 +248,15 @@ func (m Model) renderPickerModal() string {
 
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(colorSelected).
-		Width(width-2).
-		Height(height-2).
+		BorderForeground(colorFocus).
+		Background(colorPanel).
+		Width(width - 2).
+		Height(height - 2).
 		Render(content)
 
 	// Add title in border by prepending it
 	// We'll use a simpler approach: put title above content
-	titleStyle := lipgloss.NewStyle().Foreground(colorSelected).Bold(true)
+	titleStyle := themed(colorFocus).Bold(true)
 	title := titleStyle.Render(" Add Project ")
 
 	// Reconstruct with title line replacing part of the top border

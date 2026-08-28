@@ -1,45 +1,59 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 type Theme struct {
-	Panel      lipgloss.Color
-	Border     lipgloss.Color
-	Selected   lipgloss.Color
-	Text       lipgloss.Color
-	Dim        lipgloss.Color
-	Key        lipgloss.Color // footer shortcut keys
-	Running    lipgloss.Color
-	Waiting    lipgloss.Color
-	Finished   lipgloss.Color
-	Terminated lipgloss.Color
+	Panel         lipgloss.Color
+	Border        lipgloss.Color
+	Selected      lipgloss.Color
+	Focus         lipgloss.Color
+	SelectionText lipgloss.Color
+	Text          lipgloss.Color
+	Dim           lipgloss.Color
+	Key           lipgloss.Color // footer shortcut keys
+	Running       lipgloss.Color
+	Waiting       lipgloss.Color
+	Finished      lipgloss.Color
+	Terminated    lipgloss.Color
 }
 
 var Dark = Theme{
-	Panel:      "",        // transparent — inherits terminal background
-	Border:     "#2d3348",
-	Selected:   "#6366f1",
-	Text:       "#e2e8f0",
-	Dim:        "#4b5563",
-	Key:        "#818cf8",
-	Running:    "#fb923c",
-	Waiting:    "#f87171",
-	Finished:   "#4b5563",
-	Terminated: "#ef4444",
+	// Rosé Pine default dark palette.
+	Panel:         "#191724",
+	Border:        "#26233a",
+	Selected:      "#31748f",
+	Focus:         "#9ccfd8",
+	SelectionText: "#191724",
+	Text:          "#e0def4",
+	Dim:           "#908caa",
+	Key:           "#9ccfd8",
+	Running:       "#f6c177",
+	Waiting:       "#eb6f92",
+	Finished:      "#6e6a86",
+	Terminated:    "#eb6f92",
 }
 
 var (
 	Light = Theme{
-		Panel:      "#f8fafc",
-		Border:     "#cbd5e1",
-		Selected:   "#2563eb",
-		Text:       "#0f172a",
-		Dim:        "#94a3b8",
-		Key:        "#1d4ed8",
-		Running:    "#ea580c",
-		Waiting:    "#dc2626",
-		Finished:   "#94a3b8",
-		Terminated: "#dc2626",
+		// Rosé Pine Dawn palette.
+		Panel:         "#faf4ed",
+		Border:        "#dfdad9",
+		Selected:      "#56949f",
+		Focus:         "#286983",
+		SelectionText: "#fffaf3",
+		Text:          "#575279",
+		Dim:           "#797593",
+		Key:           "#286983",
+		Running:       "#ea9d34",
+		Waiting:       "#b4637a",
+		Finished:      "#9893a5",
+		Terminated:    "#b4637a",
 	}
 )
 
@@ -59,24 +73,13 @@ func ThemeByName(name string) Theme {
 	}
 }
 
-// System theme uses ANSI color numbers and no explicit background so it
-// inherits whatever colors the terminal theme (e.g. Omarchy) defines.
-var System = Theme{
-	Panel:      "",   // transparent — terminal default background
-	Border:     "8",  // ANSI bright-black (dark gray in most themes)
-	Selected:   "4",  // ANSI blue
-	Text:       "15", // ANSI bright-white
-	Dim:        "8",  // ANSI bright-black
-	Key:        "12", // ANSI bright-blue
-	Running:    "3",  // ANSI yellow
-	Waiting:    "1",  // ANSI red
-	Finished:   "8",
-	Terminated: "1",
-}
-
-// systemTheme returns the System theme (transparent bg, ANSI colors).
+// systemTheme resolves the terminal preference to one of the two real visual
+// themes. System is only an automatic selector; it is not a third palette.
 func systemTheme() Theme {
-	return System
+	if lipgloss.HasDarkBackground() {
+		return Dark
+	}
+	return Light
 }
 
 // SetTheme applies t as the active theme and rebuilds all package-level styles.
@@ -85,6 +88,8 @@ func SetTheme(t Theme) {
 	colorPanel = t.Panel
 	colorBorder = t.Border
 	colorSelected = t.Selected
+	colorFocus = t.Focus
+	colorSelectionText = t.SelectionText
 	colorText = t.Text
 	colorDim = t.Dim
 	colorKey = t.Key
@@ -93,27 +98,82 @@ func SetTheme(t Theme) {
 	colorFinished = t.Finished
 	colorTerminated = t.Terminated
 
-	headerBase := lipgloss.NewStyle().Foreground(colorText).Padding(0, 1)
-	footerBase := lipgloss.NewStyle().Foreground(colorDim).Padding(0, 1)
+	headerBase := themed(colorText).Padding(0, 1)
+	footerBase := themed(colorText).Padding(0, 1)
 	if t.Panel != "" {
 		headerBase = headerBase.Background(colorPanel)
 		footerBase = footerBase.Background(colorPanel)
 	}
 	styleHeader = headerBase
 	styleFooter = footerBase
-	styleFooterKey = lipgloss.NewStyle().Foreground(colorKey).Bold(true)
-	stylePanelTitle = lipgloss.NewStyle().Foreground(colorDim).Bold(true).PaddingLeft(1).PaddingBottom(0)
-	styleTreeItem = lipgloss.NewStyle().PaddingLeft(1)
-	styleTreeSelected = lipgloss.NewStyle().Background(colorSelected).Foreground(lipgloss.Color("#ffffff")).PaddingLeft(1)
+	styleFooterKey = themed(colorKey).Bold(true)
+	stylePanelTitle = themed(colorDim).Bold(true).PaddingLeft(1).PaddingBottom(0)
+	styleTreeItem = themed(colorText).PaddingLeft(1)
+	styleTreeSelected = lipgloss.NewStyle().Background(colorSelected).Foreground(colorSelectionText).PaddingLeft(1)
 	styleStateDot = map[string]lipgloss.Style{
-		"running":      lipgloss.NewStyle().Foreground(colorRunning),
-		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting),
-		"fresh":        lipgloss.NewStyle().Foreground(colorDim),
-		"finished":     lipgloss.NewStyle().Foreground(colorFinished),
-		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated),
-		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated),
+		"running":      lipgloss.NewStyle().Foreground(colorRunning).Background(colorPanel),
+		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting).Background(colorPanel),
+		"fresh":        lipgloss.NewStyle().Foreground(colorDim).Background(colorPanel),
+		"finished":     lipgloss.NewStyle().Foreground(colorFinished).Background(colorPanel),
+		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated).Background(colorPanel),
+		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated).Background(colorPanel),
 	}
-	styleOutputEmpty = lipgloss.NewStyle().Foreground(colorDim).PaddingLeft(2).PaddingTop(1)
+	styleOutputEmpty = themed(colorDim).PaddingLeft(2).PaddingTop(1)
+}
+
+// themed preserves the active panel canvas for nested foreground styles.
+// Without an explicit background, Lip Gloss resets spans to the terminal
+// default, which produces black rectangles in Light mode.
+func themed(fg lipgloss.Color) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(fg).Background(colorPanel)
+}
+
+// restorePanelBackground keeps the canvas stable across nested Lip Gloss
+// styles. Lip Gloss closes nested styles with a terminal reset, which would
+// otherwise expose the terminal default background between colored spans.
+func restorePanelBackground(s string) string {
+	panel := colorRGB(colorPanel)
+	if panel == [3]uint64{} {
+		return s
+	}
+	background := fmt.Sprintf("\x1b[48;2;%d;%d;%dm", panel[0], panel[1], panel[2])
+	restore := "\x1b[0m" + background
+	s = strings.ReplaceAll(s, "\x1b[0m", restore)
+	s = strings.ReplaceAll(s, "\x1b[49m", "\x1b[49m"+background)
+	return background + s + "\x1b[0m"
+}
+
+// restoreBaseStyle is used for Canopy-owned text-only regions, such as the
+// footer. It must not be applied to PTY output because that output owns its
+// own foreground colors.
+func restoreBaseStyle(s string) string {
+	panel := colorRGB(colorPanel)
+	text := colorRGB(colorText)
+	if panel == [3]uint64{} || text == [3]uint64{} {
+		return s
+	}
+	background := fmt.Sprintf("\x1b[48;2;%d;%d;%dm", panel[0], panel[1], panel[2])
+	foreground := fmt.Sprintf("\x1b[38;2;%d;%d;%dm", text[0], text[1], text[2])
+	restore := "\x1b[0m" + background + foreground
+	s = strings.ReplaceAll(s, "\x1b[0m", restore)
+	s = strings.ReplaceAll(s, "\x1b[49m", "\x1b[49m"+background+foreground)
+	return background + foreground + s + "\x1b[0m"
+}
+
+func colorRGB(color lipgloss.Color) [3]uint64 {
+	var rgb [3]uint64
+	value := string(color)
+	if !strings.HasPrefix(value, "#") || len(value) != 7 {
+		return rgb
+	}
+	var err error
+	for i, part := range []string{value[1:3], value[3:5], value[5:7]} {
+		rgb[i], err = strconv.ParseUint(part, 16, 8)
+		if err != nil {
+			return [3]uint64{}
+		}
+	}
+	return rgb
 }
 
 // NextThemeName returns the next theme name in the cycle.

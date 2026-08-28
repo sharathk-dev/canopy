@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/sharathk-dev/canopy/internal/protocol"
 )
 
@@ -178,7 +177,7 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 		if titlePad < 0 {
 			titlePad = 0
 		}
-		ageStr := lipgloss.NewStyle().Foreground(colorDim).Render(age)
+		ageStr := themed(colorDim).Render(age)
 
 		if selected {
 			// Use raw ANSI so inner sequences don't reset the blue background.
@@ -195,7 +194,7 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 		} else {
 			content = fmt.Sprintf("    %s  %s%s %s",
 				stateDot(item.session.State),
-				lipgloss.NewStyle().Foreground(colorText).Render(name),
+				themed(colorText).Render(name),
 				strings.Repeat(" ", titlePad),
 				ageStr,
 			)
@@ -301,4 +300,3 @@ func firstSessionIndex(items []treeItem) int {
 	}
 	return -1
 }
-

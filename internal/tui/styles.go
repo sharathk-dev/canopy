@@ -10,16 +10,18 @@ import (
 var animationFrame uint64
 
 var (
-	colorPanel      = activeTheme.Panel
-	colorBorder     = activeTheme.Border
-	colorSelected   = activeTheme.Selected
-	colorText       = activeTheme.Text
-	colorDim        = activeTheme.Dim
-	colorKey        = activeTheme.Key
-	colorRunning    = activeTheme.Running
-	colorWaiting    = activeTheme.Waiting
-	colorFinished   = activeTheme.Finished
-	colorTerminated = activeTheme.Terminated
+	colorPanel         = activeTheme.Panel
+	colorBorder        = activeTheme.Border
+	colorSelected      = activeTheme.Selected
+	colorFocus         = activeTheme.Focus
+	colorSelectionText = activeTheme.SelectionText
+	colorText          = activeTheme.Text
+	colorDim           = activeTheme.Dim
+	colorKey           = activeTheme.Key
+	colorRunning       = activeTheme.Running
+	colorWaiting       = activeTheme.Waiting
+	colorFinished      = activeTheme.Finished
+	colorTerminated    = activeTheme.Terminated
 
 	styleHeader = lipgloss.NewStyle().
 			Background(colorPanel).
@@ -28,20 +30,24 @@ var (
 
 	styleFooter = lipgloss.NewStyle().
 			Background(colorPanel).
-			Foreground(colorDim).
+			Foreground(colorText).
 			Padding(0, 1)
 
 	styleFooterKey = lipgloss.NewStyle().
 			Foreground(colorKey).
+			Background(colorPanel).
 			Bold(true)
 
 	stylePanelTitle = lipgloss.NewStyle().
 			Foreground(colorDim).
+			Background(colorPanel).
 			Bold(true).
 			PaddingLeft(1).
 			PaddingBottom(0)
 
 	styleTreeItem = lipgloss.NewStyle().
+			Foreground(colorText).
+			Background(colorPanel).
 			PaddingLeft(1)
 
 	styleTreeSelected = lipgloss.NewStyle().
@@ -50,16 +56,17 @@ var (
 				PaddingLeft(1)
 
 	styleStateDot = map[string]lipgloss.Style{
-		"running":      lipgloss.NewStyle().Foreground(colorRunning),
-		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting),
-		"fresh":        lipgloss.NewStyle().Foreground(colorDim),
-		"finished":     lipgloss.NewStyle().Foreground(colorFinished),
-		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated),
-		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated),
+		"running":      lipgloss.NewStyle().Foreground(colorRunning).Background(colorPanel),
+		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting).Background(colorPanel),
+		"fresh":        lipgloss.NewStyle().Foreground(colorDim).Background(colorPanel),
+		"finished":     lipgloss.NewStyle().Foreground(colorFinished).Background(colorPanel),
+		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated).Background(colorPanel),
+		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated).Background(colorPanel),
 	}
 
 	styleOutputEmpty = lipgloss.NewStyle().
 				Foreground(colorDim).
+				Background(colorPanel).
 				PaddingLeft(2).
 				PaddingTop(1)
 )
@@ -68,7 +75,7 @@ func stateStyle(state string) lipgloss.Style {
 	if s, ok := styleStateDot[state]; ok {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(colorDim)
+	return themed(colorDim)
 }
 
 func stateDot(state string) string {

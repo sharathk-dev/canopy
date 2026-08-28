@@ -59,11 +59,11 @@ func (m Model) modal(title, body string, width int) string {
 	if width < 30 {
 		width = 30
 	}
-	content := lipgloss.NewStyle().Width(width-2).Padding(1, 2).Render(body)
+	content := themed(colorText).Width(width-2).Padding(1, 2).Render(body)
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorSelected).Width(width).
+		BorderForeground(colorFocus).Background(colorPanel).Width(width).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Foreground(colorSelected).Bold(true).Render(title), content))
+			themed(colorFocus).Bold(true).Render(title), content))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
 		lipgloss.WithWhitespaceBackground(lipgloss.NoColor{}))
 }
@@ -71,7 +71,7 @@ func (m Model) modal(title, body string, width int) string {
 func (m Model) renderTitleModal() string {
 	value := m.titleInput + "█"
 	if m.titleInput == "" {
-		value = "█" + lipgloss.NewStyle().Foreground(colorDim).Render("session title")
+		value = "█" + themed(colorDim).Render("session title")
 	}
 	body := "Title: " + value + "\n\n" +
 		styleFooterKey.Render("enter") + " save    " + styleFooterKey.Render("esc") + " cancel"
@@ -81,10 +81,10 @@ func (m Model) renderTitleModal() string {
 func (m Model) renderNewSessionModal() string {
 	value := m.titleInput + "█"
 	if m.titleInput == "" {
-		value = "█" + lipgloss.NewStyle().Foreground(colorDim).Render("session title")
+		value = "█" + themed(colorDim).Render("session title")
 	}
 	body := "Title (optional): " + value + "\n\n" +
-		lipgloss.NewStyle().Foreground(colorDim).Render("Leave blank to generate a session name.") + "\n\n" +
+		themed(colorDim).Render("Leave blank to generate a session name.") + "\n\n" +
 		styleFooterKey.Render("enter") + " start    " + styleFooterKey.Render("esc") + " cancel"
 	return m.modal("New session", body, 60)
 }
@@ -95,7 +95,7 @@ func (m Model) renderKillModal() string {
 }
 
 func (m Model) renderDeleteModal() string {
-	enterStyle := lipgloss.NewStyle().Foreground(colorDim)
+	enterStyle := themed(colorDim)
 	if m.projectDeleteInput == "DELETE" || m.worktreeDeleteInput == "DELETE" || m.scheduleDeleteInput == "DELETE" {
 		enterStyle = styleFooterKey
 	}
@@ -130,21 +130,21 @@ func (m Model) renderWorktreeModal() string {
 		value := field.value
 		if i == m.worktreeField {
 			if value == "" {
-				value = "█" + lipgloss.NewStyle().Foreground(colorDim).Render(field.hint)
+				value = "█" + themed(colorDim).Render(field.hint)
 			} else {
 				value += "█"
 			}
 			lines = append(lines, styleFooterKey.Render(label)+" "+value)
 		} else {
 			if value == "" {
-				value = lipgloss.NewStyle().Foreground(colorDim).Render(field.hint)
+				value = themed(colorDim).Render(field.hint)
 			}
-			lines = append(lines, lipgloss.NewStyle().Foreground(colorDim).Render(label+" ")+value)
+			lines = append(lines, themed(colorDim).Render(label+" ")+value)
 		}
 	}
 	enterStyle := styleFooterKey
 	if strings.TrimSpace(m.worktreeBranch) == "" {
-		enterStyle = lipgloss.NewStyle().Foreground(colorDim)
+		enterStyle = themed(colorDim)
 	}
 	lines = append(lines, "", styleFooterKey.Render("tab")+" next    "+
 		enterStyle.Render("enter")+" create    "+styleFooterKey.Render("esc")+" cancel")

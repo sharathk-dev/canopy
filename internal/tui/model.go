@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	leftPanelRatio = 0.32
+	leftPanelRatio = 0.25
 	pollInterval   = time.Second
 	footerHeight   = 1
 )
@@ -36,8 +36,9 @@ type Model struct {
 	runs      map[string][]protocol.ScheduleRun
 
 	// config
-	config    protocol.Config
-	themeName string
+	config       protocol.Config
+	themeName    string
+	themePending string
 
 	// tree
 	items    []treeItem
@@ -148,7 +149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		rows, cols := m.panelSize()
 		for _, wtSessions := range m.sessions {
 			for _, sess := range wtSessions {
-				cmds = append(cmds, resizeSessionCmd(m.sockPath, sess.ID, rows, cols))
+				cmds = append(cmds, resizeAndRedrawSessionCmd(m.sockPath, sess.ID, rows, cols))
 			}
 		}
 
@@ -177,6 +178,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.schedules = msg.schedules
 		m.runs = msg.runs
 		m.config = msg.config
+		if m.themePending != "" {
+			if msg.themeName == m.themePending {
+				m.themePending = ""
+			} else {
+				msg.themeName = m.themePending
+			}
+		}
 		if msg.themeName != m.themeName {
 			m.themeName = msg.themeName
 			SetTheme(ThemeByName(m.themeName))
@@ -185,7 +193,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rows, cols := m.panelSize()
 			for _, wtSessions := range m.sessions {
 				for _, sess := range wtSessions {
-					cmds = append(cmds, resizeSessionCmd(m.sockPath, sess.ID, rows, cols))
+					cmds = append(cmds, resizeAndRedrawSessionCmd(m.sockPath, sess.ID, rows, cols))
 				}
 			}
 			m.sessionsSized = true
@@ -783,6 +791,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindSettings {
 			next := NextThemeName(m.themeName)
 			m.themeName = next
+			m.themePending = next
 			SetTheme(ThemeByName(next))
 			cmds = append(cmds, saveThemeCmd(m.dbPath, next))
 		}
@@ -903,10 +912,10 @@ func (m Model) handleLockedKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.C
 func (m *Model) refreshSnapshot(cmds *[]tea.Cmd) {
 	if sess := selectedSession(m.items, m.cursor); sess != nil {
 		rows, cols := m.panelSize()
-		*cmds = append(*cmds,
-			resizeSessionCmd(m.sockPath, sess.ID, rows, cols),
-			fetchSnapshotCmd(m.sockPath, sess.ID),
-		)
+		// Resize must complete before taking the snapshot. Running these as a
+		// batch races the fetch against the PTY resize and can leave Claude's
+		// status line rendered for the previous pane width.
+		*cmds = append(*cmds, resizeAndFetchSnapshotCmd(m.sockPath, sess.ID, rows, cols))
 	} else {
 		m.output = ""
 		m.viewport.SetContent("")
@@ -966,16 +975,16 @@ func (m Model) View() string {
 	if m.confirmKillID != "" {
 		view = m.renderKillModal()
 	}
-	return view
+	return restorePanelBackground(view)
 }
 
 func (m Model) renderScheduleModal(background string) string {
 	const modalWidth = 76
 
-	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
-	textStyle := lipgloss.NewStyle().Foreground(colorText)
-	boldStyle := lipgloss.NewStyle().Foreground(colorText).Bold(true)
-	titleStyle := lipgloss.NewStyle().Foreground(colorSelected).Bold(true)
+	dimStyle := themed(colorDim)
+	textStyle := themed(colorText)
+	boldStyle := themed(colorText).Bold(true)
+	titleStyle := themed(colorFocus).Bold(true)
 
 	innerW := modalWidth - 2 // subtract border
 
@@ -1015,7 +1024,7 @@ func (m Model) renderScheduleModal(background string) string {
 			valueRendered = dimStyle.Render(prefix + value)
 		}
 		if i == 2 && m.cronError != "" {
-			valueRendered += "  " + lipgloss.NewStyle().Foreground(colorTerminated).Render(m.cronError)
+			valueRendered += "  " + themed(colorTerminated).Render(m.cronError)
 		}
 
 		fieldLine := "  " + labelRendered + " " + valueRendered
@@ -1064,13 +1073,14 @@ func (m Model) renderScheduleModal(background string) string {
 	hintLine := styleFooterKey.Render("tab") + dimStyle.Render(" next   ") +
 		enterStyle.Render("enter") + dimStyle.Render(" confirm   ") +
 		styleFooterKey.Render("esc") + dimStyle.Render(" cancel")
-	lines = append(lines, lipgloss.NewStyle().Width(innerW).Render("  "+hintLine))
+	lines = append(lines, themed(colorText).Width(innerW).Render("  "+hintLine))
 
 	content := strings.Join(lines, "\n")
 
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
-		BorderForeground(colorSelected).
+		BorderForeground(colorFocus).
+		Background(colorPanel).
 		Width(innerW).
 		Render(content)
 
@@ -1113,7 +1123,7 @@ func (m Model) renderFooter() string {
 		if gap < 1 {
 			gap = 1
 		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+		return restoreBaseStyle(styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right))
 	} else if m.sessionLocked {
 		hints = []string{
 			styleFooterKey.Render("ctrl+q") + " back to tree",
@@ -1182,9 +1192,9 @@ func (m Model) renderFooter() string {
 				if gap < 1 {
 					gap = 1
 				}
-				return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
+				return restoreBaseStyle(styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right))
 			}
-			return styleFooter.Width(m.width).Render(left)
+			return restoreBaseStyle(styleFooter.Width(m.width).Render(left))
 		default: // kindSettings
 			hints = []string{
 				styleFooterKey.Render("t") + " toggle theme",
@@ -1193,7 +1203,7 @@ func (m Model) renderFooter() string {
 			}
 		}
 	}
-	return styleFooter.Width(m.width).Render(strings.Join(hints, "   "))
+	return restoreBaseStyle(styleFooter.Width(m.width).Render(strings.Join(hints, "   ")))
 }
 
 func (m Model) renderHelp() string {
@@ -1202,8 +1212,8 @@ func (m Model) renderHelp() string {
 		bodyH = 1
 	}
 
-	section := lipgloss.NewStyle().Foreground(colorText).Bold(true)
-	key := lipgloss.NewStyle().Foreground(colorText).Bold(true)
+	section := themed(colorText).Bold(true)
+	key := themed(colorText).Bold(true)
 	muted := styleOutputEmpty.PaddingLeft(0).PaddingTop(0)
 	lines := []string{
 		"",
@@ -1256,11 +1266,11 @@ func (m Model) renderBody() string {
 
 	rightActive := m.rightFocused || m.sessionLocked
 
-	lc := lipgloss.Color(colorSelected)
+	lc := lipgloss.Color(colorFocus)
 	rc := lipgloss.Color(colorBorder)
 	if rightActive {
 		lc = colorBorder
-		rc = colorSelected
+		rc = colorFocus
 	}
 
 	// Each panel has a full lipgloss border (2 chars wide, 2 rows tall).
@@ -1282,7 +1292,7 @@ func (m Model) renderBody() string {
 	// Left panel content.
 	titleStyle := stylePanelTitle
 	if !rightActive {
-		titleStyle = stylePanelTitle.Foreground(colorSelected)
+		titleStyle = stylePanelTitle.Foreground(colorFocus)
 	}
 
 	settingsIdx := -1
@@ -1327,6 +1337,7 @@ func (m Model) renderBody() string {
 	leftPanel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lc).
+		Background(colorPanel).
 		Width(leftInnerW).
 		Height(innerH).
 		Render(leftContent)
@@ -1334,6 +1345,7 @@ func (m Model) renderBody() string {
 	rightPanel := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(rc).
+		Background(colorPanel).
 		Width(rightInnerW).
 		Height(innerH).
 		Render(rightContent)
@@ -1344,7 +1356,7 @@ func (m Model) renderBody() string {
 func (m Model) renderEmptyState(bodyH int) string {
 	pad := strings.Repeat("\n", bodyH/3)
 	content := pad +
-		lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(4).Render("No projects yet.") + "\n\n" +
+		themed(colorText).Bold(true).PaddingLeft(4).Render("No projects yet.") + "\n\n" +
 		styleOutputEmpty.Render("Press  a  to add the current directory as a project.") + "\n" +
 		styleOutputEmpty.Render("Or run: canopy project add")
 	return lipgloss.NewStyle().Width(m.width).Height(bodyH).Render(content)
@@ -1358,8 +1370,8 @@ func (m Model) renderDetail(width, height int) string {
 			if themeName == "" {
 				themeName = "system"
 			}
-			activeStyle := lipgloss.NewStyle().Foreground(colorKey).Bold(true)
-			dimStyle := lipgloss.NewStyle().Foreground(colorDim)
+			activeStyle := themed(colorKey).Bold(true)
+			dimStyle := themed(colorDim)
 			var themeParts []string
 			for _, n := range ThemeNames {
 				if n == themeName {
@@ -1371,7 +1383,7 @@ func (m Model) renderDetail(width, height int) string {
 			themeRow := fmt.Sprintf("%-22s %s", "theme", strings.Join(themeParts, "  "))
 			lines := []string{
 				"",
-				lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render("config"),
+				themed(colorText).Bold(true).PaddingLeft(2).Render("config"),
 				"",
 				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_scheduler_concurrency", m.config.MaxSchedulerConcurrency)),
 				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_scheduler_queue_size", m.config.MaxSchedulerQueueSize)),
@@ -1387,15 +1399,15 @@ func (m Model) renderDetail(width, height int) string {
 			if runs := m.runs[item.schedule.ID]; len(runs) > 0 {
 				lastRun = runs[0].StartedAt.Local().Format(time.DateTime) + "  " + runs[0].Status
 				if runs[0].Output != "" {
-					return lipgloss.NewStyle().Width(width).Render("\n" + lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(item.schedule.Name) + "\n\n" + styleOutputEmpty.Render("cron     "+item.schedule.Cron) + "\n" + styleOutputEmpty.Render("skill    /"+item.schedule.Action) + "\n" + styleOutputEmpty.Render("last run "+lastRun) + "\n\n" + runs[0].Output)
+					return themed(colorText).Width(width).Render("\n" + themed(colorText).Bold(true).PaddingLeft(2).Render(item.schedule.Name) + "\n\n" + styleOutputEmpty.Render("cron     "+item.schedule.Cron) + "\n" + styleOutputEmpty.Render("skill    /"+item.schedule.Action) + "\n" + styleOutputEmpty.Render("last run "+lastRun) + "\n\n" + runs[0].Output)
 				}
 			}
-			return lipgloss.NewStyle().Width(width).Render("\n" + lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(item.schedule.Name) + "\n\n" + styleOutputEmpty.Render("cron     "+item.schedule.Cron) + "\n" + styleOutputEmpty.Render("skill    /"+item.schedule.Action) + "\n" + styleOutputEmpty.Render("last run "+lastRun) + "\n\n" + styleOutputEmpty.Render("r run now   space enable/disable"))
+			return themed(colorText).Width(width).Render("\n" + themed(colorText).Bold(true).PaddingLeft(2).Render(item.schedule.Name) + "\n\n" + styleOutputEmpty.Render("cron     "+item.schedule.Cron) + "\n" + styleOutputEmpty.Render("skill    /"+item.schedule.Action) + "\n" + styleOutputEmpty.Render("last run "+lastRun) + "\n\n" + styleOutputEmpty.Render("r run now   space enable/disable"))
 		}
 		if item.worktree != nil {
 			lines := []string{
 				"",
-				lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(item.worktree.Branch),
+				themed(colorText).Bold(true).PaddingLeft(2).Render(item.worktree.Branch),
 				"",
 				styleOutputEmpty.Render("branch    " + item.worktree.Branch),
 				styleOutputEmpty.Render("path      " + item.worktree.Path),
@@ -1425,9 +1437,9 @@ func (m Model) renderDetail(width, height int) string {
 
 	lines := []string{
 		"",
-		lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render(title),
+		themed(colorText).Bold(true).PaddingLeft(2).Render(title),
 		"",
-		lipgloss.NewStyle().PaddingLeft(2).Render(stateDot(sess.State) + "  " + stateLabel(sess.State)),
+		themed(colorText).PaddingLeft(2).Render(stateDot(sess.State) + "  " + stateLabel(sess.State)),
 		"",
 		styleOutputEmpty.Render("tool     " + tool),
 		styleOutputEmpty.Render("started  " + timeAgo(sess.StartedAt) + " ago"),
@@ -1436,7 +1448,7 @@ func (m Model) renderDetail(width, height int) string {
 		styleOutputEmpty.Render("press enter to attach"),
 	}
 	_ = height
-	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+	return themed(colorText).Width(width).Render(strings.Join(lines, "\n"))
 }
 
 // --- helpers ---
@@ -1648,10 +1660,42 @@ func fetchSnapshotCmd(sockPath, sessionID string) tea.Cmd {
 	}
 }
 
+func resizeAndFetchSnapshotCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
+	return func() tea.Msg {
+		p, _ := json.Marshal(protocol.ResizeSessionParams{SessionID: sessionID, Rows: rows, Cols: cols})
+		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdResizeSession, Payload: p})
+		// Claude redraws asynchronously after SIGWINCH. Give it a moment to
+		// update its status bar before reading the virtual terminal snapshot.
+		time.Sleep(100 * time.Millisecond)
+		text, err := fetchSnapshot(sockPath, sessionID)
+		if err != nil {
+			if isDaemonDown(err) {
+				return daemonDownMsg{}
+			}
+			return snapshotMsg("")
+		}
+		return snapshotMsg(text)
+	}
+}
+
 func resizeSessionCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
 	return func() tea.Msg {
 		p, _ := json.Marshal(protocol.ResizeSessionParams{SessionID: sessionID, Rows: rows, Cols: cols})
 		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdResizeSession, Payload: p})
+		return nil
+	}
+}
+
+func resizeAndRedrawSessionCmd(sockPath, sessionID string, rows, cols uint16) tea.Cmd {
+	return func() tea.Msg {
+		p, _ := json.Marshal(protocol.ResizeSessionParams{SessionID: sessionID, Rows: rows, Cols: cols})
+		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdResizeSession, Payload: p})
+
+		// Claude redraws its status bar when it receives Ctrl+L. This is the
+		// same redraw users can trigger manually, but it is safe to do once
+		// after a layout resize instead of leaving stale truncated content.
+		input, _ := json.Marshal(protocol.InputParams{SessionID: sessionID, Data: []byte{0x0c}})
+		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdInput, Payload: input})
 		return nil
 	}
 }
