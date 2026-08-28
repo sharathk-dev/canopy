@@ -20,7 +20,6 @@ import (
 const (
 	leftPanelRatio = 0.32
 	pollInterval   = time.Second
-	headerHeight   = 1
 	footerHeight   = 1
 )
 
@@ -762,7 +761,6 @@ func (m Model) View() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.renderHeader(),
 		m.renderBody(),
 		m.renderFooter(),
 	)
@@ -914,7 +912,7 @@ func (m Model) renderFooter() string {
 }
 
 func (m Model) renderHelp() string {
-	bodyH := m.height - headerHeight - footerHeight
+	bodyH := m.height - footerHeight
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -961,7 +959,7 @@ func (m Model) renderHelp() string {
 }
 
 func (m Model) renderBody() string {
-	bodyH := m.height - headerHeight - footerHeight
+	bodyH := m.height - footerHeight
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -1233,7 +1231,7 @@ func (m *Model) clampCursor() {
 }
 
 func (m *Model) rebuildViewport() {
-	bodyH := m.height - headerHeight - footerHeight
+	bodyH := m.height - footerHeight
 	innerH := bodyH - 2
 	usableW := m.width - 4
 	leftInnerW := int(float64(usableW) * leftPanelRatio)
@@ -1253,7 +1251,7 @@ func (m *Model) rebuildViewport() {
 
 // panelSize returns the (rows, cols) of the right panel in terminal cells.
 func (m *Model) panelSize() (uint16, uint16) {
-	bodyH := m.height - headerHeight - footerHeight
+	bodyH := m.height - footerHeight
 	innerH := bodyH - 2
 	usableW := m.width - 4
 	leftInnerW := int(float64(usableW) * leftPanelRatio)
