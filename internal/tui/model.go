@@ -1096,7 +1096,10 @@ func (m Model) renderDetail(width, height int) string {
 	if title == "" {
 		title = sess.CWD
 	}
-	age := time.Since(sess.StartedAt).Round(time.Second)
+	tool := sess.Tool
+	if tool == "" {
+		tool = "shell"
+	}
 
 	lines := []string{
 		"",
@@ -1104,8 +1107,8 @@ func (m Model) renderDetail(width, height int) string {
 		"",
 		lipgloss.NewStyle().PaddingLeft(2).Render(stateDot(sess.State) + "  " + stateLabel(sess.State)),
 		"",
-		styleOutputEmpty.Render("tool     " + sess.Tool),
-		styleOutputEmpty.Render("started  " + age.String() + " ago"),
+		styleOutputEmpty.Render("tool     " + tool),
+		styleOutputEmpty.Render("started  " + timeAgo(sess.StartedAt) + " ago"),
 		styleOutputEmpty.Render("cwd      " + sess.CWD),
 		"",
 		styleOutputEmpty.Render("press enter to attach"),

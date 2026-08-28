@@ -161,19 +161,39 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 		if tool == "" {
 			tool = "shell"
 		}
-		dot := stateDot(item.session.State)
 		name := item.session.Title
 		if name == "" {
 			name = tool
 		}
-		// Use the session title when available, while keeping the state visible.
+
+		age := timeAgo(item.session.StartedAt)
+		ageW := len([]rune(age)) // age is always ASCII so rune len == display width
+		// Layout inside the style padding: "    " (4) + dot (1) + "  " (2) + title + " " + age
+		titleMaxW := w - 4 - 1 - 2 - 1 - ageW
+		if titleMaxW < 4 {
+			titleMaxW = 4
+		}
+		name = truncate(name, titleMaxW)
+		titlePad := titleMaxW - len([]rune(name))
+		if titlePad < 0 {
+			titlePad = 0
+		}
+		ageStr := lipgloss.NewStyle().Foreground(colorDim).Render(age)
+
 		if selected {
-			// For selected, rebuild without style so we can apply bg
-			content = fmt.Sprintf("    %s  %s", selectedStateDot(item.session.State), name)
+			boldName := lipgloss.NewStyle().Bold(true).Render(name)
+			content = fmt.Sprintf("    %s  %s%s %s",
+				selectedStateDot(item.session.State),
+				boldName,
+				strings.Repeat(" ", titlePad),
+				ageStr,
+			)
 		} else {
-			content = fmt.Sprintf("    %s  %s",
-				dot,
+			content = fmt.Sprintf("    %s  %s%s %s",
+				stateDot(item.session.State),
 				lipgloss.NewStyle().Foreground(colorText).Render(name),
+				strings.Repeat(" ", titlePad),
+				ageStr,
 			)
 		}
 

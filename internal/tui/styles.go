@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -129,4 +130,31 @@ func stateText(state string) string {
 	default:
 		return state
 	}
+}
+
+// truncate shortens s to maxW runes, appending … if cut.
+func truncate(s string, maxW int) string {
+	runes := []rune(s)
+	if len(runes) <= maxW {
+		return s
+	}
+	if maxW <= 1 {
+		return "…"
+	}
+	return string(runes[:maxW-1]) + "…"
+}
+
+// timeAgo returns a compact human-readable duration since t.
+func timeAgo(t time.Time) string {
+	d := time.Since(t)
+	if d < time.Minute {
+		return "now"
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }
