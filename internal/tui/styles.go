@@ -11,8 +11,8 @@ var animationFrame uint64
 
 var (
 	colorPanel      = lipgloss.Color("#111111")
-	colorBorder     = lipgloss.Color("#333333")
-	colorSelected   = lipgloss.Color("#2563eb") // blue
+	colorBorder     = lipgloss.Color("#4a5568") // visible but not distracting
+	colorSelected   = lipgloss.Color("#3b82f6") // blue
 	colorText       = lipgloss.Color("#e2e8f0")
 	colorDim        = lipgloss.Color("#64748b")
 	colorRunning    = lipgloss.Color("#f97316") // orange
@@ -69,9 +69,6 @@ var (
 		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated),
 		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated),
 	}
-
-	styleDivider = lipgloss.NewStyle().
-			Foreground(colorBorder)
 
 	styleOutputEmpty = lipgloss.NewStyle().
 				Foreground(colorDim).

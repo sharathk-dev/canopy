@@ -181,12 +181,16 @@ func renderTreeItem(item treeItem, selected bool, width int) string {
 		ageStr := lipgloss.NewStyle().Foreground(colorDim).Render(age)
 
 		if selected {
-			boldName := lipgloss.NewStyle().Bold(true).Render(name)
+			// Use raw ANSI so inner sequences don't reset the blue background.
+			// \x1b[1m = bold on, \x1b[22m = bold off (no full reset).
+			boldName := fmt.Sprintf("\x1b[1m%s\x1b[22m", name)
+			// Dim the age on the blue background without resetting bg.
+			dimAge := fmt.Sprintf("\x1b[38;2;148;163;184m%s\x1b[38;2;255;255;255m", age)
 			content = fmt.Sprintf("    %s  %s%s %s",
 				selectedStateDot(item.session.State),
 				boldName,
 				strings.Repeat(" ", titlePad),
-				ageStr,
+				dimAge,
 			)
 		} else {
 			content = fmt.Sprintf("    %s  %s%s %s",

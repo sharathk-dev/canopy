@@ -970,26 +970,37 @@ func (m Model) renderBody() string {
 		return m.renderEmptyState(bodyH)
 	}
 
-	leftW := int(float64(m.width) * leftPanelRatio)
-	if leftW < 22 {
-		leftW = 22
-	}
-	rightW := m.width - leftW - 1
-
-	treeH := bodyH - 2
-	if treeH < 1 {
-		treeH = 1
-	}
-
 	rightActive := m.rightFocused || m.sessionLocked
 
-	// PROJECTS title is blue when tree has focus; divider is blue when right has focus.
+	lc := lipgloss.Color(colorSelected)
+	rc := lipgloss.Color(colorBorder)
+	if rightActive {
+		lc = colorBorder
+		rc = colorSelected
+	}
+
+	// Each panel has a full lipgloss border (2 chars wide, 2 rows tall).
+	// Two panels side by side: (leftInnerW+2) + (rightInnerW+2) = m.width
+	innerH := bodyH - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+	usableW := m.width - 4
+	leftInnerW := int(float64(usableW) * leftPanelRatio)
+	if leftInnerW < 20 {
+		leftInnerW = 20
+	}
+	rightInnerW := usableW - leftInnerW
+	if rightInnerW < 10 {
+		rightInnerW = 10
+	}
+
+	// Left panel content.
 	titleStyle := stylePanelTitle
 	if !rightActive {
 		titleStyle = stylePanelTitle.Foreground(colorSelected)
 	}
 
-	// Find the pinned settings item (always last).
 	settingsIdx := -1
 	for i, item := range m.items {
 		if item.kind == kindSettings {
@@ -998,41 +1009,52 @@ func (m Model) renderBody() string {
 		}
 	}
 
-	scrollH := treeH
+	scrollH := innerH - 1 // -1 for WORKSPACE title
 	if settingsIdx >= 0 {
-		scrollH = treeH - 1
+		scrollH = innerH - 2 // -1 for pinned settings too
+	}
+	if scrollH < 1 {
+		scrollH = 1
 	}
 
 	var treeContent string
 	if m.searchQuery != "" && len(m.items) == 0 {
 		treeContent = styleOutputEmpty.Render("No results for \"" + m.searchQuery + "\"")
 	} else {
-		treeContent = renderTree(m.items, m.cursor, leftW, scrollH)
+		treeContent = renderTree(m.items, m.cursor, leftInnerW, scrollH)
 	}
 
-	left := titleStyle.Width(leftW).Render("WORKSPACE") + "\n" + treeContent
+	leftContent := titleStyle.Width(leftInnerW).Render("WORKSPACE") + "\n" + treeContent
 	if settingsIdx >= 0 {
-		left += renderTreeItem(treeItem{kind: kindSettings}, m.cursor == settingsIdx, leftW) + "\n"
+		leftContent += renderTreeItem(treeItem{kind: kindSettings}, m.cursor == settingsIdx, leftInnerW)
 	}
 
-	divLines := make([]string, bodyH)
-	for i := range divLines {
-		divLines[i] = "│"
-	}
-	divColor := colorBorder
-	if rightActive {
-		divColor = colorSelected
-	}
-	divider := styleDivider.Foreground(divColor).Render(strings.Join(divLines, "\n"))
-
-	var right string
+	// Right panel content.
+	var rightContent string
 	if m.output == "" {
-		right = m.renderDetail(rightW, bodyH)
+		rightContent = m.renderDetail(rightInnerW, innerH)
 	} else {
-		right = m.viewport.View()
+		rightContent = m.viewport.View()
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
+	// Wrap each panel in a lipgloss border. Width/Height set the inner content
+	// dimensions; the border chars are added outside. This avoids per-line ANSI
+	// measurement which breaks on raw PTY output.
+	leftPanel := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lc).
+		Width(leftInnerW).
+		Height(innerH).
+		Render(leftContent)
+
+	rightPanel := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(rc).
+		Width(rightInnerW).
+		Height(innerH).
+		Render(rightContent)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 }
 
 func (m Model) renderEmptyState(bodyH int) string {
@@ -1212,27 +1234,40 @@ func (m *Model) clampCursor() {
 
 func (m *Model) rebuildViewport() {
 	bodyH := m.height - headerHeight - footerHeight
-	leftW := int(float64(m.width) * leftPanelRatio)
-	rightW := m.width - leftW - 1
-	if rightW < 10 {
-		rightW = 10
+	innerH := bodyH - 2
+	usableW := m.width - 4
+	leftInnerW := int(float64(usableW) * leftPanelRatio)
+	if leftInnerW < 20 {
+		leftInnerW = 20
 	}
-	m.viewport = viewport.New(rightW, bodyH)
+	rightInnerW := usableW - leftInnerW
+	if rightInnerW < 10 {
+		rightInnerW = 10
+	}
+	if innerH < 1 {
+		innerH = 1
+	}
+	m.viewport = viewport.New(rightInnerW, innerH)
 	m.viewport.SetContent(m.output)
 }
 
 // panelSize returns the (rows, cols) of the right panel in terminal cells.
 func (m *Model) panelSize() (uint16, uint16) {
 	bodyH := m.height - headerHeight - footerHeight
-	leftW := int(float64(m.width) * leftPanelRatio)
-	rightW := m.width - leftW - 1
-	if rightW < 10 {
-		rightW = 10
+	innerH := bodyH - 2
+	usableW := m.width - 4
+	leftInnerW := int(float64(usableW) * leftPanelRatio)
+	if leftInnerW < 20 {
+		leftInnerW = 20
 	}
-	if bodyH < 1 {
-		bodyH = 1
+	rightInnerW := usableW - leftInnerW
+	if rightInnerW < 10 {
+		rightInnerW = 10
 	}
-	return uint16(bodyH), uint16(rightW)
+	if innerH < 1 {
+		innerH = 1
+	}
+	return uint16(innerH), uint16(rightInnerW)
 }
 
 func (m *Model) selectedCWD() string {
@@ -1457,7 +1492,7 @@ func sendInputCmd(sockPath, sessionID string, data []byte) tea.Cmd {
 	}
 }
 
-func killSessionCmd(sockPath, dbPath, sessionID string, pid int) tea.Cmd {
+func killSessionCmd(sockPath, dbPath, sessionID string, _ int) tea.Cmd {
 	return func() tea.Msg {
 		p, _ := json.Marshal(protocol.KillSessionParams{SessionID: sessionID})
 		_, _ = rpc(sockPath, protocol.Cmd{Type: protocol.CmdKillSession, Payload: p})
