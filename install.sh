@@ -40,7 +40,7 @@ fi
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-echo "Downloading ${asset}..."
+echo "Downloading ${asset} (${VERSION})..."
 curl --fail --location --silent --show-error --retry 3 "$url" --output "$tmp" \
     || die "could not download ${url}; check that this version has a published ${asset} release"
 
@@ -48,7 +48,8 @@ mkdir -p "$INSTALL_DIR"
 install -m 0755 "$tmp" "${INSTALL_DIR}/${BINARY}"
 trap - EXIT
 
-echo "Installed ${INSTALL_DIR}/${BINARY}"
+installed_version="$("${INSTALL_DIR}/${BINARY}" --version 2>/dev/null || echo "unknown")"
+echo "Installed ${INSTALL_DIR}/${BINARY}  (${installed_version})"
 
 case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;
