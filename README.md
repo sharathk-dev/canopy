@@ -49,6 +49,7 @@ Quitting the TUI does not intentionally terminate sessions. Relaunching `canopy`
 ## CLI commands
 
 ```bash
+canopy update
 canopy project add [path]
 canopy project list
 canopy worktree list
