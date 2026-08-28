@@ -10,6 +10,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/sharathk-dev/canopy/internal/dbg"
 	"github.com/sharathk-dev/canopy/internal/git"
 	"github.com/sharathk-dev/canopy/internal/hooks"
 	"github.com/sharathk-dev/canopy/internal/protocol"
@@ -346,9 +347,11 @@ func (d *Daemon) handleSessionSnapshot(conn net.Conn, raw json.RawMessage) {
 
 	text, revision := proc.snapshot()
 	if params.SinceRevision != 0 && params.SinceRevision == revision {
+		dbg.Log("SNAP", "unchanged sess=%s rev=%d", params.SessionID, revision)
 		d.sendOK(conn, protocol.SnapshotResponse{Revision: revision, Changed: false})
 		return
 	}
+	dbg.Log("SNAP", "changed sess=%s rev=%d bytes=%d", params.SessionID, revision, len(text))
 	d.sendOK(conn, protocol.SnapshotResponse{Text: text, Revision: revision, Changed: true})
 }
 

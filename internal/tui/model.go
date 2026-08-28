@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sharathk-dev/canopy/internal/dbg"
 	"github.com/sharathk-dev/canopy/internal/protocol"
 	"github.com/sharathk-dev/canopy/internal/scheduler"
 	"github.com/sharathk-dev/canopy/internal/store"
@@ -286,6 +287,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.sessionID != activeID || !msg.changed {
+			tuiLog("snapshot discarded sess=%s changed=%v active=%s", msg.sessionID, msg.changed, activeID)
 			break
 		}
 		m.snapshotSessionID = msg.sessionID
@@ -1005,6 +1007,10 @@ func (m *Model) refreshSnapshot(cmds *[]tea.Cmd) {
 // --- View ---
 
 func (m Model) View() string {
+	if dbg.Enabled() {
+		start := time.Now()
+		defer func() { tuiLog("render %.2fms", time.Since(start).Seconds()*1000) }()
+	}
 	if !m.ready {
 		return "Loading…\n"
 	}
@@ -1737,13 +1743,19 @@ func fetchDataCmd(dbPath string) tea.Cmd {
 
 func fetchSnapshotCmd(sockPath, sessionID string, sinceRevision uint64) tea.Cmd {
 	return func() tea.Msg {
+		start := time.Now()
+		tuiLog("snapshot request sess=%s since=%d", sessionID, sinceRevision)
 		response, err := fetchSnapshot(sockPath, sessionID, sinceRevision)
 		if err != nil {
 			if isDaemonDown(err) {
+				tuiLog("snapshot error (daemon down): %v", err)
 				return daemonDownMsg{}
 			}
+			tuiLog("snapshot error: %v", err)
 			return snapshotMsg{}
 		}
+		tuiLog("snapshot response sess=%s changed=%v rev=%d bytes=%d latency=%s",
+			sessionID, response.Changed, response.Revision, len(response.Text), time.Since(start).Round(time.Microsecond))
 		return snapshotMsg{sessionID: sessionID, text: response.Text, revision: response.Revision, changed: response.Changed}
 	}
 }
