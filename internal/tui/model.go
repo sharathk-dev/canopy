@@ -783,22 +783,6 @@ func (m Model) View() string {
 	return view
 }
 
-func (m Model) renderHeader() string {
-	crumb := breadcrumb(m.items, m.cursor)
-	sess := selectedSession(m.items, m.cursor)
-
-	var right string
-	if sess != nil {
-		right = stateDot(sess.State) + " " + stateLabel(sess.State)
-	}
-
-	left := styleHeaderBreadcrumb.Render(crumb)
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-	if gap < 0 {
-		gap = 0
-	}
-	return styleHeader.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-}
 
 func (m Model) renderFooter() string {
 	var hints []string
@@ -1133,8 +1117,8 @@ func (m Model) renderDetail(width, height int) string {
 				"",
 				lipgloss.NewStyle().Foreground(colorText).Bold(true).PaddingLeft(2).Render("config"),
 				"",
-				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_concurrency", m.config.MaxConcurrency)),
-				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_queue_size", m.config.MaxQueueSize)),
+				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_scheduler_concurrency", m.config.MaxSchedulerConcurrency)),
+				styleOutputEmpty.Render(fmt.Sprintf("%-22s %d", "max_scheduler_queue_size", m.config.MaxSchedulerQueueSize)),
 				styleOutputEmpty.Render(themeRow),
 				"",
 				styleOutputEmpty.Render("stored in canopy.db · settings table"),

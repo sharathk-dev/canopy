@@ -100,21 +100,12 @@ func SetTheme(t Theme) {
 		footerBase = footerBase.Background(colorPanel)
 	}
 	styleHeader = headerBase
-	styleHeaderBreadcrumb = lipgloss.NewStyle().Foreground(colorText).Bold(true)
 	styleFooter = footerBase
 	styleFooterKey = lipgloss.NewStyle().Foreground(colorKey).Bold(true)
 	stylePanelTitle = lipgloss.NewStyle().Foreground(colorDim).Bold(true).PaddingLeft(1).PaddingBottom(0)
 	styleTreeItem = lipgloss.NewStyle().PaddingLeft(1)
 	styleTreeSelected = lipgloss.NewStyle().Background(colorSelected).Foreground(lipgloss.Color("#ffffff")).PaddingLeft(1)
 	styleStateDot = map[string]lipgloss.Style{
-		"running":      lipgloss.NewStyle().Foreground(colorRunning),
-		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting),
-		"fresh":        lipgloss.NewStyle().Foreground(colorDim),
-		"finished":     lipgloss.NewStyle().Foreground(colorFinished),
-		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated),
-		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated),
-	}
-	styleStateLabel = map[string]lipgloss.Style{
 		"running":      lipgloss.NewStyle().Foreground(colorRunning),
 		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting),
 		"fresh":        lipgloss.NewStyle().Foreground(colorDim),

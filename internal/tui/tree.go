@@ -302,25 +302,3 @@ func firstSessionIndex(items []treeItem) int {
 	return -1
 }
 
-// breadcrumb returns the "project / worktree / tool" string for the header.
-func breadcrumb(items []treeItem, cursor int) string {
-	if cursor < 0 || cursor >= len(items) {
-		return ""
-	}
-	item := items[cursor]
-	parts := []string{}
-	if item.project != nil {
-		parts = append(parts, item.project.Name)
-	}
-	if item.worktree != nil {
-		parts = append(parts, item.worktree.Branch)
-	}
-	if item.session != nil {
-		tool := item.session.Tool
-		if tool == "" {
-			tool = "shell"
-		}
-		parts = append(parts, tool)
-	}
-	return strings.Join(parts, " / ")
-}

@@ -26,10 +26,6 @@ var (
 			Foreground(colorText).
 			Padding(0, 1)
 
-	styleHeaderBreadcrumb = lipgloss.NewStyle().
-				Foreground(colorText).
-				Bold(true)
-
 	styleFooter = lipgloss.NewStyle().
 			Background(colorPanel).
 			Foreground(colorDim).
@@ -62,15 +58,6 @@ var (
 		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated),
 	}
 
-	styleStateLabel = map[string]lipgloss.Style{
-		"running":      lipgloss.NewStyle().Foreground(colorRunning),
-		"needs_input":  lipgloss.NewStyle().Foreground(colorWaiting),
-		"fresh":        lipgloss.NewStyle().Foreground(colorDim),
-		"finished":     lipgloss.NewStyle().Foreground(colorFinished),
-		"terminated":   lipgloss.NewStyle().Foreground(colorTerminated),
-		"disconnected": lipgloss.NewStyle().Foreground(colorTerminated),
-	}
-
 	styleOutputEmpty = lipgloss.NewStyle().
 				Foreground(colorDim).
 				PaddingLeft(2).
@@ -89,7 +76,7 @@ func stateDot(state string) string {
 }
 
 func selectedStateDot(state string) string {
-	r, g, b := 148, 163, 184 // dim gray
+	r, g, b := 148, 163, 184
 	switch state {
 	case "running":
 		r, g, b = 249, 115, 22
@@ -100,8 +87,6 @@ func selectedStateDot(state string) string {
 	case "terminated", "disconnected":
 		r, g, b = 239, 68, 68
 	}
-	// Restore only the foreground after the glyph; resetting all attributes
-	// would also clear the selected row's blue background.
 	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm%s\x1b[38;2;255;255;255m", r, g, b, stateGlyph(state))
 }
 
@@ -130,7 +115,6 @@ func stateText(state string) string {
 	}
 }
 
-// truncate shortens s to maxW runes, appending … if cut.
 func truncate(s string, maxW int) string {
 	runes := []rune(s)
 	if len(runes) <= maxW {
@@ -142,7 +126,6 @@ func truncate(s string, maxW int) string {
 	return string(runes[:maxW-1]) + "…"
 }
 
-// timeAgo returns a compact human-readable duration since t.
 func timeAgo(t time.Time) string {
 	d := time.Since(t)
 	if d < time.Minute {

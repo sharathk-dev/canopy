@@ -42,7 +42,7 @@ func New(db *store.Store, sockPath string) *Daemon {
 		sockPath:      sockPath,
 		injector:      hooks.ClaudeInjector{},
 		binaryMtime:   mtime,
-		scheduleQueue: make(chan protocol.Schedule, cfg.MaxQueueSize),
+		scheduleQueue: make(chan protocol.Schedule, cfg.MaxSchedulerQueueSize),
 	}
 }
 
@@ -53,7 +53,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	d.restoreSessions()
 
 	cfg, _ := d.db.LoadConfig()
-	for i := 0; i < cfg.MaxConcurrency; i++ {
+	for i := 0; i < cfg.MaxSchedulerConcurrency; i++ {
 		go d.scheduleWorker(ctx)
 	}
 	go d.scheduleLoop(ctx)

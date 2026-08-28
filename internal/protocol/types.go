@@ -63,15 +63,15 @@ type ScheduleRun struct {
 
 // Config holds user-editable canopy settings persisted in the database.
 type Config struct {
-	MaxConcurrency int
-	MaxQueueSize   int
+	MaxSchedulerConcurrency int
+	MaxSchedulerQueueSize   int
 }
 
 // DefaultConfig returns sensible defaults used when settings are absent.
 func DefaultConfig() Config {
 	return Config{
-		MaxConcurrency: 5,
-		MaxQueueSize:   16,
+		MaxSchedulerConcurrency: 5,
+		MaxSchedulerQueueSize:   16,
 	}
 }
 

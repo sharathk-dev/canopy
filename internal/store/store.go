@@ -96,12 +96,6 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	// Migration: add pid column to existing databases.
-	_, _ = db.Exec(`ALTER TABLE sessions ADD COLUMN pid INTEGER NOT NULL DEFAULT 0`)
-	// Migration: project removal is a reversible soft-unregister.
-	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`)
-	// Backfill ownership for databases created before worktrees carried it.
-	_, _ = db.Exec(`UPDATE worktrees SET project_id=(SELECT id FROM projects WHERE projects.repo_path=worktrees.repo_path) WHERE project_id=''`)
 	return &Store{db: db}, nil
 }
 
@@ -463,13 +457,13 @@ func (s *Store) LoadConfig() (protocol.Config, error) {
 		}
 		n, _ := strconv.Atoi(v)
 		switch k {
-		case "max_concurrency":
+		case "max_scheduler_concurrency":
 			if n > 0 {
-				cfg.MaxConcurrency = n
+				cfg.MaxSchedulerConcurrency = n
 			}
-		case "max_queue_size":
+		case "max_scheduler_queue_size":
 			if n > 0 {
-				cfg.MaxQueueSize = n
+				cfg.MaxSchedulerQueueSize = n
 			}
 		}
 	}
