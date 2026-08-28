@@ -53,41 +53,51 @@ type Model struct {
 	ready         bool
 	rightFocused  bool // true = j/k scroll right pane, false = navigate tree
 
-	jumpToSession       bool // set after n key; auto-navigate to first new session
-	sessionLocked       bool // when true, keys are forwarded to the active PTY
-	lockedSessionID     string
-	confirmKillID       string
-	titleEditingID      string
-	titleInput          string
-	newSessionCWD       string
-	projectAdding       bool
-	picker              picker
-	worktreeAdding      bool
-	worktreeRepo        string
-	worktreeBranch      string
-	worktreePath        string
-	worktreePathMode    bool
-	projectDeleteID     string
-	projectDeleteName   string
-	projectDeleteInput  string
-	worktreeDeleteID    string
-	worktreeDeleteRepo  string
-	worktreeDeletePath  string
-	worktreeDeleteInput string
-	scheduleAdding      bool
-	scheduleField       int
-	scheduleName        string
-	scheduleCron        string
-	scheduleSkill       string
-	searching           bool
-	searchInput         string
-	searchQuery         string
-	searchPrevious      string
-	showHelp            bool
-	daemonDown          bool
-	status              string
-	sessionsSized       bool
-	err                 string
+	jumpToSession         bool // set after n key; auto-navigate to first new session
+	sessionLocked         bool // when true, keys are forwarded to the active PTY
+	lockedSessionID       string
+	confirmKillID         string
+	titleEditingID        string
+	titleInput            string
+	newSessionCWD         string
+	projectAdding         bool
+	picker                picker
+	worktreeAdding        bool
+	worktreeRepo          string
+	worktreeBranch        string
+	worktreePath          string
+	worktreePathMode      bool
+	worktreeField         int
+	projectDeleteID       string
+	projectDeleteName     string
+	projectDeleteInput    string
+	worktreeDeleteID      string
+	worktreeDeleteRepo    string
+	worktreeDeletePath    string
+	worktreeDeleteInput   string
+	scheduleDeleteID      string
+	scheduleDeleteName    string
+	scheduleDeleteInput   string
+	scheduleAdding        bool
+	scheduleField         int
+	scheduleName          string
+	scheduleProject       string
+	scheduleProjectCursor int
+	projectPickerOpen     bool
+	scheduleCron          string
+	scheduleSkill         string
+	skillOptions          []string
+	skillCursor           int
+	searching             bool
+	searchInput           string
+	searchQuery           string
+	searchPrevious        string
+	cronError             string
+	showHelp              bool
+	daemonDown            bool
+	status                string
+	sessionsSized         bool
+	err                   string
 }
 
 // New creates a new TUI model.
@@ -319,37 +329,147 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
-	if m.scheduleAdding {
-		fields := []*string{&m.scheduleName, &m.scheduleCron, &m.scheduleSkill}
+	if m.scheduleDeleteID != "" {
 		switch msg.String() {
 		case "enter":
-			if strings.TrimSpace(*fields[m.scheduleField]) == "" {
-				return m, tea.Batch(cmds...)
+			if m.scheduleDeleteInput == "DELETE" {
+				id := m.scheduleDeleteID
+				m.scheduleDeleteID = ""
+				m.scheduleDeleteName = ""
+				m.scheduleDeleteInput = ""
+				cmds = append(cmds, archiveScheduleCmd(m.dbPath, id))
 			}
-			if m.scheduleField < len(fields)-1 {
-				m.scheduleField++
-				return m, tea.Batch(cmds...)
-			}
-			name, cron, skill := strings.TrimSpace(m.scheduleName), strings.TrimSpace(m.scheduleCron), strings.TrimSpace(m.scheduleSkill)
-			cwd := m.selectedCWD()
-			m.scheduleAdding = false
-			m.scheduleField = 0
-			m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
-			return m, tea.Batch(createScheduleCmd(m.dbPath, name, cron, skill, cwd))
 		case "esc":
-			m.scheduleAdding = false
-			m.scheduleField = 0
-			m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+			m.scheduleDeleteID = ""
+			m.scheduleDeleteName = ""
+			m.scheduleDeleteInput = ""
 		case "backspace", "ctrl+h":
-			field := fields[m.scheduleField]
-			if len(*field) > 0 {
-				runes := []rune(*field)
-				*field = string(runes[:len(runes)-1])
+			if len(m.scheduleDeleteInput) > 0 {
+				runes := []rune(m.scheduleDeleteInput)
+				m.scheduleDeleteInput = string(runes[:len(runes)-1])
 			}
 		default:
 			if len(msg.Runes) > 0 {
-				*fields[m.scheduleField] += string(msg.Runes)
+				m.scheduleDeleteInput += string(msg.Runes)
 			}
+		}
+		return m, tea.Batch(cmds...)
+	}
+
+	if m.scheduleAdding {
+		fields := []*string{&m.scheduleName, &m.scheduleProject, &m.scheduleCron, &m.scheduleSkill}
+		switch msg.String() {
+		case "tab":
+			m.scheduleField = (m.scheduleField + 1) % len(fields)
+		case "shift+tab":
+			m.scheduleField = (m.scheduleField + len(fields) - 1) % len(fields)
+		case "up", "down":
+			if m.scheduleField == 1 {
+				m.projectPickerOpen = true
+				optionCount := len(m.projects) + 1
+				if optionCount > 0 {
+					if msg.String() == "up" {
+						m.scheduleProjectCursor = (m.scheduleProjectCursor + optionCount - 1) % optionCount
+					} else {
+						m.scheduleProjectCursor = (m.scheduleProjectCursor + 1) % optionCount
+					}
+				}
+			} else if m.scheduleField == 3 {
+				options := m.filteredSkillOptions()
+				if len(options) > 0 {
+					if msg.String() == "up" {
+						m.skillCursor = (m.skillCursor + len(options) - 1) % len(options)
+					} else {
+						m.skillCursor = (m.skillCursor + 1) % len(options)
+					}
+				}
+			}
+		case "enter":
+			if m.scheduleField == 1 {
+				if !m.projectPickerOpen {
+					m.projectPickerOpen = true
+					return m, tea.Batch(cmds...)
+				}
+				if m.scheduleProjectCursor > 0 {
+					m.scheduleProject = m.projects[m.scheduleProjectCursor-1].RepoPath
+				} else {
+					m.scheduleProject = ""
+				}
+				m.skillOptions = discoverSkills(m.scheduleProject)
+				m.projectPickerOpen = false
+				m.scheduleField = 2
+				return m, tea.Batch(cmds...)
+			}
+			if m.scheduleField == 3 {
+				options := m.filteredSkillOptions()
+				if len(options) > 0 && strings.TrimPrefix(m.scheduleSkill, "/") != options[m.skillCursor] {
+					m.scheduleSkill = options[m.skillCursor]
+					return m, tea.Batch(cmds...)
+				}
+			}
+			if strings.TrimSpace(*fields[m.scheduleField]) == "" {
+				return m, tea.Batch(cmds...)
+			}
+			// If all fields are filled, submit; otherwise move to next empty field.
+			allFilled := strings.TrimSpace(m.scheduleName) != "" &&
+				strings.TrimSpace(m.scheduleCron) != "" &&
+				strings.TrimSpace(m.scheduleSkill) != ""
+			if allFilled {
+				name, cron, skill := strings.TrimSpace(m.scheduleName), strings.TrimSpace(m.scheduleCron), strings.TrimSpace(m.scheduleSkill)
+				cwd := m.scheduleProject
+				m.scheduleAdding = false
+				m.scheduleField = 0
+				m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+				m.scheduleProject = ""
+				m.scheduleProjectCursor = 0
+				m.skillOptions = nil
+				m.skillCursor = 0
+				m.projectPickerOpen = false
+				return m, tea.Batch(createScheduleCmd(m.dbPath, name, cron, skill, cwd))
+			}
+			if m.scheduleField < len(fields)-1 {
+				m.scheduleField++
+			}
+		case "esc":
+			if m.projectPickerOpen {
+				m.projectPickerOpen = false
+				return m, tea.Batch(cmds...)
+			}
+			m.scheduleAdding = false
+			m.scheduleField = 0
+			m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+			m.scheduleProject = ""
+			m.scheduleProjectCursor = 0
+			m.skillOptions = nil
+			m.skillCursor = 0
+			m.projectPickerOpen = false
+		case "backspace", "ctrl+h":
+			if m.scheduleField != 1 {
+				field := fields[m.scheduleField]
+				if len(*field) > 0 {
+					runes := []rune(*field)
+					*field = string(runes[:len(runes)-1])
+				}
+				if m.scheduleField == 3 {
+					m.skillCursor = 0
+				}
+			}
+		default:
+			if len(msg.Runes) > 0 && m.scheduleField != 1 {
+				*fields[m.scheduleField] += string(msg.Runes)
+				if m.scheduleField == 3 {
+					m.skillCursor = 0
+				}
+			}
+		}
+		if strings.TrimSpace(m.scheduleCron) != "" {
+			if _, err := scheduler.ParseCron(strings.TrimSpace(m.scheduleCron)); err != nil {
+				m.cronError = err.Error()
+			} else {
+				m.cronError = ""
+			}
+		} else {
+			m.cronError = ""
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -455,11 +575,15 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 
 	if m.worktreeAdding {
 		switch msg.String() {
+		case "tab", "shift+tab":
+			if msg.String() == "tab" {
+				m.worktreeField = (m.worktreeField + 1) % 2
+			} else {
+				m.worktreeField = (m.worktreeField + 1) % 2
+			}
 		case "enter":
-			if !m.worktreePathMode {
-				if strings.TrimSpace(m.worktreeBranch) != "" {
-					m.worktreePathMode = true
-				}
+			if m.worktreeField == 0 && strings.TrimSpace(m.worktreeBranch) != "" {
+				m.worktreeField = 1
 				return m, tea.Batch(cmds...)
 			}
 			branch := strings.TrimSpace(m.worktreeBranch)
@@ -473,6 +597,9 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.worktreeBranch = ""
 			m.worktreePath = ""
 			m.worktreePathMode = false
+			m.worktreeField = 0
+			m.worktreeField = 0
+			m.worktreeField = 0
 			args := []string{"worktree", "add", branch, "--repo", repo}
 			if path != "" {
 				args = append(args, "--path", path)
@@ -485,9 +612,10 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.worktreeBranch = ""
 			m.worktreePath = ""
 			m.worktreePathMode = false
+			m.worktreeField = 0
 		case "backspace", "ctrl+h":
 			field := &m.worktreeBranch
-			if m.worktreePathMode {
+			if m.worktreeField == 1 {
 				field = &m.worktreePath
 			}
 			if len(*field) > 0 {
@@ -496,7 +624,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			}
 		default:
 			if len(msg.Runes) > 0 {
-				if m.worktreePathMode {
+				if m.worktreeField == 1 {
 					m.worktreePath += string(msg.Runes)
 				} else {
 					m.worktreeBranch += string(msg.Runes)
@@ -648,6 +776,7 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			m.worktreeBranch = ""
 			m.worktreePath = ""
 			m.worktreePathMode = false
+			m.worktreeField = 0
 		}
 
 	case "t":
@@ -661,7 +790,20 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	case "s":
 		m.scheduleAdding = true
 		m.scheduleField = 0
-		m.scheduleName, m.scheduleCron, m.scheduleSkill = "", "", ""
+		m.scheduleName, m.scheduleCron, m.scheduleSkill, m.scheduleProject = "", "", "", ""
+		m.scheduleProjectCursor = 0
+		if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].project != nil {
+			m.scheduleProject = m.items[m.cursor].project.RepoPath
+			for i := range m.projects {
+				if m.projects[i].RepoPath == m.scheduleProject {
+					m.scheduleProjectCursor = i + 1
+					break
+				}
+			}
+		}
+		m.cronError = ""
+		m.skillOptions = discoverSkills(m.scheduleProject)
+		m.skillCursor = 0
 
 	case "r":
 		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
@@ -689,7 +831,11 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 		}
 
 	case "x":
-		if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindProject {
+		if schedule := selectedSchedule(m.items, m.cursor); schedule != nil {
+			m.scheduleDeleteID = schedule.ID
+			m.scheduleDeleteName = schedule.Name
+			m.scheduleDeleteInput = ""
+		} else if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].kind == kindProject {
 			project := m.items[m.cursor].project
 			m.projectDeleteID = project.ID
 			m.projectDeleteName = project.Name
@@ -799,66 +945,168 @@ func (m Model) View() string {
 	if m.projectAdding {
 		view = m.renderPickerModal()
 	}
+	if m.scheduleAdding {
+		view = m.renderScheduleModal(view)
+	}
+	if m.titleEditingID != "" {
+		view = m.renderTitleModal()
+	}
+	if m.projectDeleteID != "" || m.worktreeDeleteID != "" {
+		view = m.renderDeleteModal()
+	}
+	if m.worktreeAdding {
+		view = m.renderWorktreeModal()
+	}
+	if m.scheduleDeleteID != "" {
+		view = m.renderDeleteModal()
+	}
+	if m.newSessionCWD != "" {
+		view = m.renderNewSessionModal()
+	}
+	if m.confirmKillID != "" {
+		view = m.renderKillModal()
+	}
 	return view
 }
 
+func (m Model) renderScheduleModal(background string) string {
+	const modalWidth = 76
+
+	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
+	textStyle := lipgloss.NewStyle().Foreground(colorText)
+	boldStyle := lipgloss.NewStyle().Foreground(colorText).Bold(true)
+	titleStyle := lipgloss.NewStyle().Foreground(colorSelected).Bold(true)
+
+	innerW := modalWidth - 2 // subtract border
+
+	fieldLabels := []string{"Name", "Project (optional)", "Cron", "Skill"}
+	fieldValues := []string{m.scheduleName, m.scheduleProjectName(), m.scheduleCron, m.scheduleSkill}
+	fieldHints := []string{"schedule name", "select a project", "0 9 * * 1-5", "skill-name"}
+	fieldPrefixes := []string{"", "", "", "/"}
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("Add Schedule"), "")
+
+	for i, label := range fieldLabels {
+		active := i == m.scheduleField
+		prefix := fieldPrefixes[i]
+		value := fieldValues[i]
+		hint := fieldHints[i]
+
+		var labelRendered string
+		labelText := fmt.Sprintf("%-18s:", label)
+		if active {
+			labelRendered = boldStyle.Render(labelText)
+		} else {
+			labelRendered = dimStyle.Render(labelText)
+		}
+
+		var valueRendered string
+		if value == "" {
+			placeholder := dimStyle.Render(prefix + hint)
+			if active {
+				valueRendered = "█" + placeholder
+			} else {
+				valueRendered = placeholder
+			}
+		} else if active {
+			valueRendered = textStyle.Render(prefix+value) + "█"
+		} else {
+			valueRendered = dimStyle.Render(prefix + value)
+		}
+		if i == 2 && m.cronError != "" {
+			valueRendered += "  " + lipgloss.NewStyle().Foreground(colorTerminated).Render(m.cronError)
+		}
+
+		fieldLine := "  " + labelRendered + " " + valueRendered
+		lines = append(lines, lipgloss.NewStyle().Width(innerW).Render(fieldLine))
+		if i == 1 && active && m.projectPickerOpen {
+			options := append([]string{"Global only"}, projectNames(m.projects)...)
+			for j, option := range options {
+				if j >= 5 {
+					break
+				}
+				line := "  " + option
+				if j == m.scheduleProjectCursor {
+					lines = append(lines, styleTreeSelected.Width(innerW).Render(line))
+				} else {
+					lines = append(lines, dimStyle.Render(line))
+				}
+			}
+		} else if i == 3 && active {
+			options := m.filteredSkillOptions()
+			if len(options) > 0 {
+				selected := m.skillCursor
+				if selected >= len(options) {
+					selected = 0
+				}
+				for j, option := range options {
+					if j >= 5 {
+						break
+					}
+					line := "  /" + option
+					if j == selected {
+						lines = append(lines, styleTreeSelected.Width(innerW).Render(line))
+					} else {
+						lines = append(lines, dimStyle.Render(line))
+					}
+				}
+			}
+		}
+		lines = append(lines, "") // spacing between fields
+	}
+
+	// Bottom hint line
+	enterStyle := styleFooterKey
+	if !m.scheduleFormReady() {
+		enterStyle = dimStyle
+	}
+	hintLine := styleFooterKey.Render("tab") + dimStyle.Render(" next   ") +
+		enterStyle.Render("enter") + dimStyle.Render(" confirm   ") +
+		styleFooterKey.Render("esc") + dimStyle.Render(" cancel")
+	lines = append(lines, lipgloss.NewStyle().Width(innerW).Render("  "+hintLine))
+
+	content := strings.Join(lines, "\n")
+
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorSelected).
+		Width(innerW).
+		Render(content)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, modal,
+		lipgloss.WithWhitespaceBackground(lipgloss.NoColor{}),
+	)
+}
+
+func (m Model) scheduleProjectName() string {
+	for _, project := range m.projects {
+		if project.RepoPath == m.scheduleProject {
+			return project.Name
+		}
+	}
+	return ""
+}
+
+func projectNames(projects []protocol.Project) []string {
+	names := make([]string, 0, len(projects))
+	for _, project := range projects {
+		names = append(names, project.Name)
+	}
+	return names
+}
+
+func (m Model) scheduleFormReady() bool {
+	if strings.TrimSpace(m.scheduleName) == "" || strings.TrimSpace(m.scheduleCron) == "" || strings.TrimSpace(m.scheduleSkill) == "" {
+		return false
+	}
+	_, err := scheduler.ParseCron(strings.TrimSpace(m.scheduleCron))
+	return err == nil
+}
 
 func (m Model) renderFooter() string {
 	var hints []string
-	if m.projectDeleteID != "" {
-		left := "type DELETE to remove " + m.projectDeleteName + ": " + m.projectDeleteInput
-		right := styleFooterKey.Render("enter") + " confirm   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.worktreeDeleteID != "" {
-		left := "type DELETE to remove worktree: " + m.worktreeDeleteInput
-		right := styleFooterKey.Render("enter") + " confirm   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.worktreeAdding {
-		left := "branch: " + m.worktreeBranch
-		if m.worktreePathMode {
-			left = "path (optional): " + m.worktreePath
-		}
-		right := styleFooterKey.Render("enter") + " next/create   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.scheduleAdding {
-		labels := []string{"name: ", "cron: ", "skill: /"}
-		values := []string{m.scheduleName, m.scheduleCron, m.scheduleSkill}
-		left := labels[m.scheduleField] + values[m.scheduleField]
-		right := styleFooterKey.Render("enter") + " next/save   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.newSessionCWD != "" {
-		left := "new title (optional): " + m.titleInput
-		right := styleFooterKey.Render("enter") + " start   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.titleEditingID != "" {
-		left := "title: " + m.titleInput
-		right := styleFooterKey.Render("enter") + " save   " + styleFooterKey.Render("esc") + " cancel"
-		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
-		if gap < 1 {
-			gap = 1
-		}
-		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.searching {
+	if m.searching {
 		left := "search: " + m.searchInput
 		right := styleFooterKey.Render("tab") + " next   " + styleFooterKey.Render("enter") + " select   " + styleFooterKey.Render("esc") + " cancel"
 		gap := m.width - lipgloss.Width(left) - lipgloss.Width(right) - 2
@@ -866,11 +1114,6 @@ func (m Model) renderFooter() string {
 			gap = 1
 		}
 		return styleFooter.Width(m.width).Render(left + strings.Repeat(" ", gap) + right)
-	} else if m.confirmKillID != "" {
-		hints = []string{
-			styleFooterKey.Render("y/enter") + " confirm kill",
-			styleFooterKey.Render("n/esc") + " cancel",
-		}
 	} else if m.sessionLocked {
 		hints = []string{
 			styleFooterKey.Render("ctrl+q") + " back to tree",
@@ -926,6 +1169,7 @@ func (m Model) renderFooter() string {
 			hints = []string{
 				styleFooterKey.Render("r") + " run",
 				styleFooterKey.Render("space") + " enable/disable",
+				styleFooterKey.Render("x") + " remove",
 				styleFooterKey.Render("c") + " copy output",
 				styleFooterKey.Render("tab") + " → output",
 				styleFooterKey.Render("?") + " help",
@@ -943,7 +1187,7 @@ func (m Model) renderFooter() string {
 			return styleFooter.Width(m.width).Render(left)
 		default: // kindSettings
 			hints = []string{
-				styleFooterKey.Render("t") + " theme",
+				styleFooterKey.Render("t") + " toggle theme",
 				styleFooterKey.Render("?") + " help",
 				styleFooterKey.Render("q") + " quit",
 			}
@@ -979,6 +1223,7 @@ func (m Model) renderHelp() string {
 		key.Render("s") + "            add schedule",
 		key.Render("r") + "            run selected schedule / refresh",
 		key.Render("space") + "        enable or disable selected schedule",
+		key.Render("x") + "            remove selected schedule",
 		key.Render("x") + "            remove selected project or worktree",
 		"",
 		section.Render("Sessions"),
@@ -1573,6 +1818,20 @@ func killSessionCmd(sockPath, dbPath, sessionID string, _ int) tea.Cmd {
 				sess.Archived = true
 				_ = db.UpdateSession(sess)
 			}
+		}
+		return fetchDataCmd(dbPath)()
+	}
+}
+
+func archiveScheduleCmd(dbPath, scheduleID string) tea.Cmd {
+	return func() tea.Msg {
+		db, err := store.Open(dbPath)
+		if err != nil {
+			return errMsg(err.Error())
+		}
+		defer db.Close()
+		if err := db.ArchiveSchedule(scheduleID); err != nil {
+			return errMsg("archive schedule: " + err.Error())
 		}
 		return fetchDataCmd(dbPath)()
 	}

@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS schedules (
 	cron        TEXT NOT NULL,
 	cwd         TEXT NOT NULL DEFAULT '',
 	enabled     INTEGER NOT NULL DEFAULT 1,
-	last_run_at INTEGER NOT NULL DEFAULT 0
+	last_run_at INTEGER NOT NULL DEFAULT 0,
+	archived   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -93,6 +94,11 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Add columns introduced after the initial schema for existing databases.
+	if _, err := db.Exec(`ALTER TABLE schedules ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 		db.Close()
 		return nil, err
 	}
@@ -319,8 +325,8 @@ func (s *Store) ListActiveSessions() ([]protocol.Session, error) {
 
 func (s *Store) CreateSchedule(schedule protocol.Schedule) error {
 	_, err := s.db.Exec(
-		`INSERT INTO schedules(id,name,action_type,action,cron,cwd,enabled,last_run_at)
-		 VALUES(?,?,?,?,?,?,?,0)`,
+		`INSERT INTO schedules(id,name,action_type,action,cron,cwd,enabled,last_run_at,archived)
+			 VALUES(?,?,?,?,?,?,?,0,0)`,
 		schedule.ID, schedule.Name, schedule.ActionType, schedule.Action,
 		schedule.Cron, schedule.CWD, boolInt(schedule.Enabled),
 	)
@@ -329,19 +335,19 @@ func (s *Store) CreateSchedule(schedule protocol.Schedule) error {
 
 func (s *Store) GetSchedule(id string) (protocol.Schedule, error) {
 	row := s.db.QueryRow(
-		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE id=?`, id)
+		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE id=? AND archived=0`, id)
 	return scanSchedule(row)
 }
 
 func (s *Store) GetScheduleByName(name string) (protocol.Schedule, error) {
 	row := s.db.QueryRow(
-		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE name=?`, name)
+		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE name=? AND archived=0`, name)
 	return scanSchedule(row)
 }
 
 func (s *Store) ListSchedules() ([]protocol.Schedule, error) {
 	rows, err := s.db.Query(
-		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules ORDER BY name`)
+		`SELECT id,name,action_type,action,cron,cwd,enabled,last_run_at FROM schedules WHERE archived=0 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -359,6 +365,12 @@ func (s *Store) ListSchedules() ([]protocol.Schedule, error) {
 
 func (s *Store) SetScheduleEnabled(id string, enabled bool) error {
 	_, err := s.db.Exec(`UPDATE schedules SET enabled=? WHERE id=?`, boolInt(enabled), id)
+	return err
+}
+
+// ArchiveSchedule hides a schedule while preserving its configuration and run history.
+func (s *Store) ArchiveSchedule(id string) error {
+	_, err := s.db.Exec(`UPDATE schedules SET archived=1, enabled=0 WHERE id=?`, id)
 	return err
 }
 
