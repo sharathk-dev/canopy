@@ -92,16 +92,15 @@ func renderTree(items []treeItem, cursor, width, height int) string {
 	}
 	var lines []treeLine
 	for i, item := range items {
+		if item.kind == kindSettings {
+			continue // rendered as a pinned footer, not in the scroll area
+		}
 		newScheduleSection := item.kind == kindSchedule && (i == 0 || items[i-1].kind != kindSchedule)
 		newProjectSection := item.kind == kindProject && (i == 0 || items[i-1].kind != kindProject)
-		newSettingsSection := item.kind == kindSettings
-		if i == 0 || newScheduleSection || newProjectSection || newSettingsSection {
+		if i == 0 || newScheduleSection || newProjectSection {
 			heading := "PROJECTS"
-			switch item.kind {
-			case kindSchedule:
+			if item.kind == kindSchedule {
 				heading = "SCHEDULES"
-			case kindSettings:
-				heading = "SETTINGS"
 			}
 			lines = append(lines, treeLine{heading: heading, itemIndex: -1})
 		}

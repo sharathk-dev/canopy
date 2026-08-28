@@ -989,13 +989,31 @@ func (m Model) renderBody() string {
 		titleStyle = stylePanelTitle.Foreground(colorSelected)
 	}
 
+	// Find the pinned settings item (always last).
+	settingsIdx := -1
+	for i, item := range m.items {
+		if item.kind == kindSettings {
+			settingsIdx = i
+			break
+		}
+	}
+
+	scrollH := treeH
+	if settingsIdx >= 0 {
+		scrollH = treeH - 1
+	}
+
 	var treeContent string
 	if m.searchQuery != "" && len(m.items) == 0 {
 		treeContent = styleOutputEmpty.Render("No results for \"" + m.searchQuery + "\"")
 	} else {
-		treeContent = renderTree(m.items, m.cursor, leftW, treeH)
+		treeContent = renderTree(m.items, m.cursor, leftW, scrollH)
 	}
+
 	left := titleStyle.Width(leftW).Render("WORKSPACE") + "\n" + treeContent
+	if settingsIdx >= 0 {
+		left += renderTreeItem(treeItem{kind: kindSettings}, m.cursor == settingsIdx, leftW) + "\n"
+	}
 
 	divLines := make([]string, bodyH)
 	for i := range divLines {
