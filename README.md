@@ -90,7 +90,7 @@ make install PREFIX="$HOME/.local"
 ```
 
 For implementation details, persistence, hooks, recovery behavior, and known limitations,
-see the [technical design](docs/plan/spec.md).
+see the [technical design](docs/plan/spec.md). See the [changelog](CHANGELOG.md) for release notes.
 
 ## License
 

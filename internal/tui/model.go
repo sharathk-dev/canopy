@@ -79,6 +79,7 @@ type Model struct {
 	showHelp            bool
 	daemonDown          bool
 	status              string
+	sessionsSized       bool
 	err                 string
 }
 
@@ -125,6 +126,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.rebuildViewport()
 		m.ready = true
+		m.sessionsSized = false
 		// Resize all active sessions to match the right panel.
 		rows, cols := m.panelSize()
 		for _, wtSessions := range m.sessions {
@@ -157,6 +159,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessions = msg.sessions
 		m.schedules = msg.schedules
 		m.runs = msg.runs
+		if m.ready && !m.sessionsSized {
+			rows, cols := m.panelSize()
+			for _, wtSessions := range m.sessions {
+				for _, sess := range wtSessions {
+					cmds = append(cmds, resizeSessionCmd(m.sockPath, sess.ID, rows, cols))
+				}
+			}
+			m.sessionsSized = true
+		}
 		if len(m.expanded) == 0 {
 			for _, p := range m.projects {
 				m.expanded["p:"+p.ID] = true

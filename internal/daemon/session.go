@@ -194,7 +194,15 @@ func (s *sessionProc) sendInput(data []byte) error {
 }
 
 func (s *sessionProc) resize(rows, cols uint16) error {
-	return pty.Setsize(s.ptmx, &pty.Winsize{Rows: rows, Cols: cols})
+	if err := pty.Setsize(s.ptmx, &pty.Winsize{Rows: rows, Cols: cols}); err != nil {
+		return err
+	}
+	// Keep the renderer's virtual terminal in sync with the PTY. Without this,
+	// restored sessions receive the new size but snapshots remain 80x24.
+	s.mu.Lock()
+	s.term.Resize(int(cols), int(rows))
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *sessionProc) kill() {
