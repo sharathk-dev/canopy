@@ -101,6 +101,37 @@ type Model struct {
 	err                   string
 }
 
+// inputMode identifies which part of the TUI owns keyboard input. Modes are
+// ordered from most specific to least specific; a modal or attached session
+// must consume input before tree navigation or global shortcuts can see it.
+type inputMode uint8
+
+const (
+	modeNavigation inputMode = iota
+	modeModal
+	modeSearch
+	modeHelp
+	modeAttached
+)
+
+func (m Model) inputMode() inputMode {
+	switch {
+	case m.sessionLocked:
+		return modeAttached
+	case m.showHelp:
+		return modeHelp
+	case m.searching:
+		return modeSearch
+	case m.projectDeleteID != "", m.worktreeDeleteID != "", m.scheduleDeleteID != "":
+		return modeModal
+	case m.scheduleAdding, m.projectAdding, m.worktreeAdding,
+		m.newSessionCWD != "", m.titleEditingID != "", m.confirmKillID != "":
+		return modeModal
+	default:
+		return modeNavigation
+	}
+}
+
 // New creates a new TUI model.
 func New(sockPath, dbPath string) Model {
 	return Model{
@@ -248,12 +279,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = string(msg)
 
 	case tea.KeyMsg:
-		if m.searching {
-			return m.handleKey(msg, cmds)
-		}
-		if m.sessionLocked {
-			return m.handleLockedKey(msg, cmds)
-		}
 		return m.handleKey(msg, cmds)
 	}
 
@@ -265,16 +290,92 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Route the event to exactly one owner. This prevents text-input modes
+	// from accidentally falling through to navigation/global shortcuts.
+	switch m.inputMode() {
+	case modeAttached:
+		return m.handleLockedKey(msg, cmds)
+	case modeHelp:
+		return m.handleHelpKey(msg, cmds)
+	case modeSearch:
+		return m.handleSearchKey(msg, cmds)
+	case modeModal:
+		return m.handleModalKey(msg, cmds)
+	default:
+		return m.handleNavigationKey(msg, cmds)
+	}
+}
+
+func (m Model) handleHelpKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "?", "q":
+		m.showHelp = false
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) handleSearchKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEscape {
+		m.searchQuery = m.searchPrevious
+		m.searching = false
+		m.searchInput = ""
+		m.rebuildItems()
+		m.clampCursor()
+		return m, tea.Batch(cmds...)
+	}
+	if msg.Type == tea.KeyEnter {
+		selectedKey := treeItemKey(m.items, m.cursor)
+		m.searching = false
+		m.searchInput = ""
+		m.searchQuery = ""
+		m.rebuildItems()
+		m.cursor = findTreeItem(m.items, selectedKey)
+		m.clampCursor()
+		return m, tea.Batch(cmds...)
+	}
+	switch msg.String() {
+	case "tab":
+		m.cursor = nextSearchMatch(m.items, m.cursor)
+	case "shift+tab":
+		m.cursor = prevSearchMatch(m.items, m.cursor)
+	case "down":
+		m.cursor = nextSearchMatch(m.items, m.cursor)
+	case "up":
+		m.cursor = prevSearchMatch(m.items, m.cursor)
+	case "backspace", "ctrl+h":
+		if len(m.searchInput) > 0 {
+			runes := []rune(m.searchInput)
+			m.searchInput = string(runes[:len(runes)-1])
+		}
+		m.searchQuery = strings.TrimSpace(m.searchInput)
+		m.rebuildItems()
+		m.cursor = searchResultCursor(m.items, m.searchQuery)
+	default:
+		if len(msg.Runes) > 0 {
+			m.searchInput += string(msg.Runes)
+		}
+		m.searchQuery = strings.TrimSpace(m.searchInput)
+		m.rebuildItems()
+		m.cursor = searchResultCursor(m.items, m.searchQuery)
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// handleModalKey owns all form and confirmation interactions. The existing
+// modal implementations remain together for now so their behavior stays
+// unchanged while routing is made explicit.
+func (m Model) handleModalKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	// Modal input owns the keyboard. In particular, do not let the global quit
+	// shortcut escape a confirmation or text-entry flow unexpectedly.
+	if msg.String() == "ctrl+c" {
+		return m, tea.Batch(cmds...)
+	}
+	return m.handleNavigationKey(msg, cmds)
+}
+
+func (m Model) handleNavigationKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
-	}
-
-	if m.showHelp {
-		switch msg.String() {
-		case "esc", "?", "q":
-			m.showHelp = false
-		}
-		return m, tea.Batch(cmds...)
 	}
 
 	if m.projectDeleteID != "" {
@@ -478,67 +579,6 @@ func (m Model) handleKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			m.cronError = ""
-		}
-		return m, tea.Batch(cmds...)
-	}
-
-	if m.searching {
-		if msg.Type == tea.KeyEscape {
-			m.searchQuery = m.searchPrevious
-			m.searching = false
-			m.searchInput = ""
-			m.rebuildItems()
-			m.clampCursor()
-			return m, tea.Batch(cmds...)
-		}
-		if msg.Type == tea.KeyEnter {
-			selectedKey := treeItemKey(m.items, m.cursor)
-			m.searching = false
-			m.searchInput = ""
-			m.searchQuery = ""
-			m.rebuildItems()
-			m.cursor = findTreeItem(m.items, selectedKey)
-			m.clampCursor()
-			return m, tea.Batch(cmds...)
-		}
-		switch msg.String() {
-		case "enter":
-			selectedKey := treeItemKey(m.items, m.cursor)
-			m.searching = false
-			m.searchInput = ""
-			m.searchQuery = ""
-			m.rebuildItems()
-			m.cursor = findTreeItem(m.items, selectedKey)
-			m.clampCursor()
-		case "esc":
-			m.searchQuery = m.searchPrevious
-			m.searching = false
-			m.searchInput = ""
-			m.rebuildItems()
-			m.clampCursor()
-		case "tab":
-			m.cursor = nextSearchMatch(m.items, m.cursor)
-		case "shift+tab":
-			m.cursor = prevSearchMatch(m.items, m.cursor)
-		case "down":
-			m.cursor = nextSearchMatch(m.items, m.cursor)
-		case "up":
-			m.cursor = prevSearchMatch(m.items, m.cursor)
-		case "backspace", "ctrl+h":
-			if len(m.searchInput) > 0 {
-				runes := []rune(m.searchInput)
-				m.searchInput = string(runes[:len(runes)-1])
-			}
-			m.searchQuery = strings.TrimSpace(m.searchInput)
-			m.rebuildItems()
-			m.cursor = searchResultCursor(m.items, m.searchQuery)
-		default:
-			if len(msg.Runes) > 0 {
-				m.searchInput += string(msg.Runes)
-			}
-			m.searchQuery = strings.TrimSpace(m.searchInput)
-			m.rebuildItems()
-			m.cursor = searchResultCursor(m.items, m.searchQuery)
 		}
 		return m, tea.Batch(cmds...)
 	}
