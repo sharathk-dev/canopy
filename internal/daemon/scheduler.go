@@ -14,6 +14,8 @@ import (
 	"github.com/sharathk-dev/canopy/internal/scheduler"
 )
 
+const scheduleExecutionTimeout = 30 * time.Minute
+
 func (d *Daemon) scheduleLoop(ctx context.Context) {
 	d.runDueSchedules(ctx, time.Now())
 	ticker := time.NewTicker(30 * time.Second)
@@ -75,6 +77,10 @@ func (d *Daemon) scheduleWorker(ctx context.Context) {
 }
 
 func (d *Daemon) executeSchedule(ctx context.Context, schedule protocol.Schedule) {
+	d.executeScheduleWithTimeout(ctx, schedule, scheduleExecutionTimeout)
+}
+
+func (d *Daemon) executeScheduleWithTimeout(ctx context.Context, schedule protocol.Schedule, timeout time.Duration) {
 	started := time.Now()
 	run := protocol.ScheduleRun{
 		ID:         protocol.NewID(),
@@ -86,13 +92,16 @@ func (d *Daemon) executeSchedule(ctx context.Context, schedule protocol.Schedule
 		return
 	}
 
+	executionCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	var cmd *exec.Cmd
 	switch schedule.ActionType {
 	case "skill":
 		prompt := "/" + strings.TrimPrefix(strings.TrimSpace(schedule.Action), "/")
-		cmd = exec.CommandContext(ctx, "claude", "-p", prompt, "--output-format", "json")
+		cmd = exec.CommandContext(executionCtx, "claude", "-p", prompt, "--output-format", "json")
 	case "command":
-		cmd = exec.CommandContext(ctx, "sh", "-c", schedule.Action)
+		cmd = exec.CommandContext(executionCtx, "sh", "-c", schedule.Action)
 	default:
 		run.Status = "failed"
 		run.Error = fmt.Sprintf("unsupported action type: %s", schedule.ActionType)
@@ -110,7 +119,10 @@ func (d *Daemon) executeSchedule(ctx context.Context, schedule protocol.Schedule
 	if schedule.ActionType == "skill" {
 		parseClaudeScheduleOutput(&run, output)
 	}
-	if err != nil {
+	if executionCtx.Err() == context.DeadlineExceeded {
+		run.Status = "failed"
+		run.Error = fmt.Sprintf("schedule timed out after %s", timeout)
+	} else if err != nil {
 		run.Status = "failed"
 		run.Error = err.Error()
 	} else {
@@ -153,7 +165,14 @@ func (d *Daemon) handleRunSchedule(conn net.Conn, raw []byte) {
 		d.sendErr(conn, "schedule not found")
 		return
 	}
+	if _, loaded := d.inFlight.LoadOrStore(schedule.ID, struct{}{}); loaded {
+		d.sendErr(conn, "schedule is already running")
+		return
+	}
 	dbg.Log("SCHED", "manual run %q (id=%s)", schedule.Name, schedule.ID)
-	go d.executeSchedule(context.Background(), schedule)
+	go func() {
+		defer d.inFlight.Delete(schedule.ID)
+		d.executeSchedule(context.Background(), schedule)
+	}()
 	d.sendOK(conn, map[string]string{"schedule_id": schedule.ID})
 }
