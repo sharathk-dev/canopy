@@ -71,27 +71,19 @@ canopy schedule runs <name>
 
 `session kill` asks for confirmation before terminating a session.
 
+## Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/uninstall.sh | bash
+```
+
 ## Build from source
 
-Requires Go. The repository includes a conventional `Makefile`:
-
-```bash
-make fmt               # format Go files
-make check             # verify formatting and run tests
-make build             # create ./canopy
-make install           # install to ~/.local/bin/canopy
-make clean             # remove ./canopy
-```
-
-You can customize the install location:
-
-```bash
-make install PREFIX="$HOME/.local"
-```
+Requires Go 1.21+. Run `make` to see available targets.
 
 For implementation details, persistence, hooks, recovery behavior, and known limitations,
 see the [technical design](docs/plan/spec.md). See the [changelog](CHANGELOG.md) for release notes.
 
 ## License
 
-Canopy is licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+Canopy is licensed under the MIT License. See [LICENSE](LICENSE).
