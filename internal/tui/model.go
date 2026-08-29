@@ -1511,6 +1511,18 @@ func (m Model) renderDetail(width, height int) string {
 			_ = height
 			return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 		}
+		if item.kind == kindProject {
+			lines := []string{
+				"",
+				themed(colorText).Bold(true).PaddingLeft(2).Render(item.project.Name),
+				"",
+				styleOutputEmpty.Render("path      " + item.project.RepoPath),
+				"",
+				styleOutputEmpty.Render("press w to add a worktree"),
+			}
+			_ = height
+			return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+		}
 	}
 
 	sess := selectedSession(m.items, m.cursor)
