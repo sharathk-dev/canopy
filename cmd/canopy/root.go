@@ -21,10 +21,10 @@ var debugMode bool
 var version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:   "canopy",
-	Short: "Agent session manager — keep AI agent sessions organised across worktrees",
+	Use:     "canopy",
+	Short:   "Agent session manager — keep AI agent sessions organised across worktrees",
 	Version: version,
-	RunE:  runUI,
+	RunE:    runUI,
 }
 
 var uiCmd = &cobra.Command{

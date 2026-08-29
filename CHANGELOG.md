@@ -7,6 +7,13 @@ and releases use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-29
+
+### Changed
+
+- First stable release. No functional changes since 0.1.0-beta.4 beyond a
+  small project-row selection UX tweak and documentation cleanup.
+
 ## [0.1.0-beta.4] - 2026-08-28
 
 ### Added
@@ -83,7 +90,8 @@ and releases use [Semantic Versioning](https://semver.org/).
 
 - Added installation, build, licensing, and technical design documentation.
 
-[Unreleased]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.4...HEAD
+[Unreleased]: https://github.com/sharathk-dev/canopy/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.4...v1.0.0
 [0.1.0-beta.4]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.3...v0.1.0-beta.4
 [0.1.0-beta.3]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.2...v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.1...v0.1.0-beta.2

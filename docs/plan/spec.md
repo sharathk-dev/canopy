@@ -169,8 +169,6 @@ docs/plan/           Design notes
 
 - If Claude has not emitted a hook yet, its native session ID is unknown and restoration
   starts a fresh process.
-- A stale or deleted Claude native session ID should eventually fall back automatically
-  to a fresh session instead of marking restoration as failed.
 - Project removal is a reversible soft-unregister. It hides the project without deleting
   its repository, worktrees, or sessions; registering the same repository restores it.
 
