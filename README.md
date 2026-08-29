@@ -49,28 +49,16 @@ Quitting the TUI does not intentionally terminate sessions. Relaunching `canopy`
 ## CLI commands
 
 ```bash
-canopy update
-canopy project add [path]
-canopy project list
-canopy worktree list
-canopy worktree add <branch> [--base branch] [--path path]
-canopy worktree remove <path>
-canopy session new [--tool claude] [--cwd path]
-canopy session list
-canopy session attach <session-id>
-canopy session resume <session-id>
-canopy session kill <session-id>
-canopy daemon status
-canopy daemon start
-canopy daemon stop
-canopy daemon install       # start at login (macOS/Linux)
-canopy schedule add <name> --skill <skill> --cron "0 9 * * 1-5"
-canopy schedule list
-canopy schedule run <name>
-canopy schedule runs <name>
+canopy update       # update canopy itself
+canopy project      # register and list git repositories
+canopy worktree     # list, add, and remove git worktrees
+canopy session      # start, list, attach to, resume, and kill agent sessions
+canopy daemon       # start, stop, and check the background daemon
+canopy schedule     # manage recurring skills and commands
+canopy diagnostics  # write a safe diagnostic snapshot for bug reports
 ```
 
-`session kill` asks for confirmation before terminating a session.
+Run `canopy <command> --help` for subcommands and flags.
 
 ## Uninstall
 
@@ -80,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/sharathk-dev/canopy/master/uninstal
 
 ## Build from source
 
-Requires Go 1.21+. Run `make` to see available targets.
+Requires Go 1.21+. See the [Makefile](Makefile) for build, test, and dev targets.
 
 For implementation details, persistence, hooks, recovery behavior, and known limitations,
 see the [technical design](docs/plan/spec.md). See the [changelog](CHANGELOG.md) for release notes.

@@ -7,6 +7,36 @@ and releases use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0-beta.4] - 2026-08-28
+
+### Added
+
+- `canopy update` command to self-update to the latest published release.
+- `canopy diagnostics` command to write a safe diagnostic snapshot for bug reports.
+- Benchmark suite for the TUI and daemon with debug telemetry.
+
+### Changed
+
+- Scheduler execution safeguards to prevent duplicate or runaway runs.
+- Refined workspace search header and session rendering/theming.
+- Avoid redundant PTY snapshot refreshes when output is unchanged.
+
+### Fixed
+
+- Recover automatically from stale Claude native session IDs instead of failing restoration.
+
+## [0.1.0-beta.3] - 2026-08-28
+
+### Changed
+
+- Improved schedule and form modals.
+
+## [0.1.0-beta.2] - 2026-08-28
+
+### Fixed
+
+- Release workflow now checks out the repo before publishing, fixing a broken release job.
+
 ## [0.1.0-beta.1] - 2026-08-28
 
 ### Added
@@ -53,6 +83,9 @@ and releases use [Semantic Versioning](https://semver.org/).
 
 - Added installation, build, licensing, and technical design documentation.
 
-[Unreleased]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.1...HEAD
+[Unreleased]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.4...HEAD
+[0.1.0-beta.4]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.3...v0.1.0-beta.4
+[0.1.0-beta.3]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.2...v0.1.0-beta.3
+[0.1.0-beta.2]: https://github.com/sharathk-dev/canopy/compare/v0.1.0-beta.1...v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/sharathk-dev/canopy/compare/v0.1.0...v0.1.0-beta.1
 [0.1.0]: https://github.com/sharathk-dev/canopy/releases/tag/v0.1.0
