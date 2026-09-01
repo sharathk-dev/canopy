@@ -7,6 +7,24 @@ and releases use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-01
+
+### Fixed
+
+- Project picker: typing `j` or `k` while filtering moved the selection
+  cursor instead of appending to the filter text, making paths containing
+  those letters unfilterable.
+- Theme rendering was broken regardless of the selected theme (`dark` or
+  `light`) on terminals where Lip Gloss's auto-detected color profile
+  produced no usable color output, notably iTerm2 and Terminal.app on
+  macOS. The color profile is now forced to ANSI256 instead of relying on
+  detection, and the canvas-background patching now emits codes for that
+  same forced profile instead of raw 24-bit truecolor.
+- Removed the `system` theme auto-detection option (`lipgloss.HasDarkBackground`
+  via an OSC 11 terminal query), which was unreliable and could race with
+  Bubble Tea's own stdin reader. The theme now defaults to `dark`; existing
+  configs with a saved `system` value fall back to `dark`.
+
 ## [1.0.0] - 2026-08-29
 
 ### Changed

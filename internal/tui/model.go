@@ -1462,7 +1462,7 @@ func (m Model) renderDetail(width, height int) string {
 		if item.kind == kindSettings {
 			themeName := m.themeName
 			if themeName == "" {
-				themeName = "system"
+				themeName = "dark"
 			}
 			activeStyle := themed(colorKey).Bold(true)
 			dimStyle := themed(colorDim)

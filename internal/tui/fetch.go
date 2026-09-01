@@ -63,7 +63,7 @@ func fetchAll(dbPath string) (daemonData, error) {
 	config, _ := db.LoadConfig()
 	themeName, _ := db.GetSetting("theme")
 	if themeName == "" {
-		themeName = "system"
+		themeName = "dark"
 	}
 
 	return daemonData{
