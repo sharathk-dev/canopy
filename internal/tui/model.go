@@ -628,12 +628,12 @@ func (m Model) handleNavigationKey(msg tea.KeyMsg, cmds []tea.Cmd) (tea.Model, t
 			}
 		case "esc":
 			m.projectAdding = false
-		case "up", "k":
+		case "up":
 			if m.picker.cursor > 0 {
 				m.picker.cursor--
 				m.picker.clampCursor()
 			}
-		case "down", "j":
+		case "down":
 			if m.picker.cursor < len(m.picker.matches)-1 {
 				m.picker.cursor++
 				m.picker.clampCursor()
