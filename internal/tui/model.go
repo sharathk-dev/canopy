@@ -1064,6 +1064,23 @@ func (m Model) View() string {
 	return restorePanelBackground(view)
 }
 
+// scrollOffset returns the start index of a maxVisible-sized window over a
+// list of length total, shifted so cursor always stays within the window.
+func scrollOffset(cursor, total, maxVisible int) int {
+	if total <= maxVisible {
+		return 0
+	}
+	offset := cursor - maxVisible + 1
+	if offset < 0 {
+		offset = 0
+	}
+	maxOffset := total - maxVisible
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	return offset
+}
+
 func (m Model) renderScheduleModal(background string) string {
 	const modalWidth = 76
 
@@ -1115,13 +1132,12 @@ func (m Model) renderScheduleModal(background string) string {
 
 		fieldLine := "  " + labelRendered + " " + valueRendered
 		lines = append(lines, lipgloss.NewStyle().Width(innerW).Render(fieldLine))
+		const maxVisible = 5
 		if i == 1 && active && m.projectPickerOpen {
 			options := append([]string{"Global only"}, projectNames(m.projects)...)
-			for j, option := range options {
-				if j >= 5 {
-					break
-				}
-				line := "  " + option
+			offset := scrollOffset(m.scheduleProjectCursor, len(options), maxVisible)
+			for j := offset; j < len(options) && j < offset+maxVisible; j++ {
+				line := "  " + options[j]
 				if j == m.scheduleProjectCursor {
 					lines = append(lines, styleTreeSelected.Width(innerW).Render(line))
 				} else {
@@ -1135,11 +1151,9 @@ func (m Model) renderScheduleModal(background string) string {
 				if selected >= len(options) {
 					selected = 0
 				}
-				for j, option := range options {
-					if j >= 5 {
-						break
-					}
-					line := "  /" + option
+				offset := scrollOffset(selected, len(options), maxVisible)
+				for j := offset; j < len(options) && j < offset+maxVisible; j++ {
+					line := "  /" + options[j]
 					if j == selected {
 						lines = append(lines, styleTreeSelected.Width(innerW).Render(line))
 					} else {
