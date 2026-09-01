@@ -7,6 +7,16 @@ and releases use [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-01
+
+### Fixed
+
+- Schedule modal: the project and skill picker dropdowns hard-capped
+  rendering at the first 5 items with no scroll offset, so moving the
+  cursor past index 4 kept navigating correctly but the highlighted row
+  went off-screen and became invisible. Both lists now scroll to follow
+  the cursor.
+
 ## [1.0.1] - 2026-09-01
 
 ### Fixed
